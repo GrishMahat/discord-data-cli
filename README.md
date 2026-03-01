@@ -15,14 +15,15 @@ A terminal UI tool to analyze your Discord data export — built in Rust.
 │  ┌─ Menu ────────────────────┐  ┌─ Quick Stats ──────────────┐ │
 │  │  1  Analyze Now           │  │  Messages      12,451      │ │
 │  │  2  Overview              │  │  Channels         183      │ │
-│  │  3  Download Attachments  │  │  With text      94.2%      │ │
-│  │  4  Messages (All)        │  │  Avg length       42 ch    │ │
-│  │  5  DMs                   │  │  Emoji          3,821      │ │
-│  │  6  Group DMs             │  │  Servers           27      │ │
-│  │  7  Public Threads        │  │                            │ │
-│  │  8  Voice Channels        │  │  Peak 21:00    843 msgs    │ │
-│  │  9  Settings              │  └────────────────────────────┘ │
-│  │  10 Quit                  │                                 │
+│  │  3  Support & Activity    │  │  With text      94.2%      │ │
+│  │  4  Download Attachments  │  │  Avg length       42 ch    │ │
+│  │  5  Messages (All)        │  │  Emoji          3,821      │ │
+│  │  6  DMs                   │  │  Servers           27      │ │
+│  │  7  Group DMs             │  │                            │ │
+│  │  8  Public Threads        │  │  Peak 21:00    843 msgs    │ │
+│  │  9  Voice Channels        │  └────────────────────────────┘ │
+│  │  10 Settings              │                                 │
+│  │  11 Quit                  │                                 │
 │  └───────────────────────────┘                                 │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -33,8 +34,11 @@ A terminal UI tool to analyze your Discord data export — built in Rust.
 - **Temporal analysis** — messages by hour-of-day, day-of-week, and month; earliest and latest dates
 - **Channel browser** — filter by DMs, Group DMs, Public Threads, and Voice; read message previews
 - **Overview dashboard** — server count, audit logs, support tickets, activity events
+- **Support & Activity Explorer** — browse individual support tickets and recent activity events
+- **Memory-safe activity loading** — streams only recent tails from activity files (works with very large exports)
 - **Attachment downloader** — fetch all media files from your message history
 - **Session persistence** — resumes your last session automatically on next launch
+- **Mouse support** — click tabs/menu items and scroll channel/message lists
 - **Zero dependencies at runtime** — single static binary, no install required
 
 ## Download
@@ -88,11 +92,15 @@ Then select **Analyze Now** from the home menu. Analysis runs in the background 
 |---|---|
 | `w` / `s` or arrow keys | Move up / down |
 | `Enter` | Select |
+| Mouse left-click | Select menu/tabs/items |
+| Mouse wheel | Scroll channels/messages |
 | `b` | Go back |
 | `q` | Quit |
 | `1`–`5` | Switch channel filters (All / DMs / Groups / Threads / Voice) |
 | `u` / `d` | Page up / down in channel list |
 | `←` / `→` | Adjust settings values |
+| In Support & Activity | `↑`/`↓` select ticket, `PgUp`/`PgDn` scroll detail, `r` reload |
+| In Support & Activity | `Tab` switch focus (tickets/activity), `/` query filter, `t` type filter, `y` source filter, `c` clear filters |
 
 ## Build from Source
 

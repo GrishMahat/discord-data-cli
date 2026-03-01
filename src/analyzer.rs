@@ -149,11 +149,20 @@ pub struct Servers {
 // ── Support Tickets ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct SupportTickets {
     pub count: u64,
     pub comments: u64,
+    pub tickets_with_comments: u64,
+    pub avg_comments_per_ticket: f64,
     /// Ticket counts grouped by status (open, closed, …).
     pub by_status: BTreeMap<String, u64>,
+    /// Ticket counts grouped by priority/severity.
+    pub by_priority: BTreeMap<String, u64>,
+    /// Ticket creation counts by month (YYYY-MM).
+    pub by_month: BTreeMap<String, u64>,
+    /// Support-ticket activity events by month (created/comments/updates).
+    pub activity_by_month: BTreeMap<String, u64>,
 }
 
 // ── Activity ──────────────────────────────────────────────────────────────────
@@ -206,7 +215,11 @@ where
     const TOTAL_STEPS: f32 = 9.0;
     let step_fraction = |step: f32| (step / TOTAL_STEPS).clamp(0.0, 1.0);
 
-    emit_progress(&mut on_progress, step_fraction(0.0), "Preparing analysis...");
+    emit_progress(
+        &mut on_progress,
+        step_fraction(0.0),
+        "Preparing analysis...",
+    );
 
     let package_dir = config.package_path(config_path, id);
     if !package_dir.exists() {
@@ -244,13 +257,25 @@ where
             .push("Account directory missing; user profile summary skipped.".to_owned());
     }
 
-    emit_progress(&mut on_progress, step_fraction(2.0), "Analyzing messages...");
+    emit_progress(
+        &mut on_progress,
+        step_fraction(2.0),
+        "Analyzing messages...",
+    );
     analyze_messages(source_dirs.messages.as_deref(), &results_dir, &mut stats)?;
     emit_progress(&mut on_progress, step_fraction(3.0), "Analyzing servers...");
     analyze_servers(source_dirs.servers.as_deref(), &mut stats)?;
-    emit_progress(&mut on_progress, step_fraction(4.0), "Analyzing support tickets...");
+    emit_progress(
+        &mut on_progress,
+        step_fraction(4.0),
+        "Analyzing support tickets...",
+    );
     analyze_support_tickets(source_dirs.support_tickets.as_deref(), &mut stats)?;
-    emit_progress(&mut on_progress, step_fraction(5.0), "Analyzing activity events...");
+    emit_progress(
+        &mut on_progress,
+        step_fraction(5.0),
+        "Analyzing activity events...",
+    );
     analyze_activity(
         source_dirs.activity.as_deref(),
         &mut stats,
@@ -264,9 +289,17 @@ where
             );
         },
     )?;
-    emit_progress(&mut on_progress, step_fraction(6.0), "Analyzing activities...");
+    emit_progress(
+        &mut on_progress,
+        step_fraction(6.0),
+        "Analyzing activities...",
+    );
     analyze_activities(source_dirs.activities.as_deref(), &mut stats)?;
-    emit_progress(&mut on_progress, step_fraction(7.0), "Analyzing programs...");
+    emit_progress(
+        &mut on_progress,
+        step_fraction(7.0),
+        "Analyzing programs...",
+    );
     analyze_programs(source_dirs.programs.as_deref(), &mut stats)?;
 
     emit_progress(&mut on_progress, step_fraction(8.0), "Writing results...");
@@ -416,6 +449,13 @@ fn analyze_support_tickets(support_dir: Option<&Path>, stats: &mut AnalysisData)
         }
         _ => {}
     }
+
+    stats.support_tickets.avg_comments_per_ticket = if stats.support_tickets.count > 0 {
+        stats.support_tickets.comments as f64 / stats.support_tickets.count as f64
+    } else {
+        0.0
+    };
+
     Ok(())
 }
 
@@ -763,13 +803,76 @@ fn summarize_ticket(value: &Value, stats: &mut AnalysisData) {
         return;
     }
     stats.support_tickets.count += 1;
-    let status = value
-        .get("status")
-        .and_then(value_to_plain_string)
+    let status = pick_plain_string(value, &["status", "ticket_status", "state"])
         .unwrap_or_else(|| "unknown".to_owned());
     increment_counter(&mut stats.support_tickets.by_status, status, 1);
+
+    if let Some(priority) = pick_plain_string(value, &["priority", "severity", "urgency"]) {
+        increment_counter(&mut stats.support_tickets.by_priority, priority, 1);
+    }
+
+    if let Some(created_month) = pick_timestamp_month(
+        value,
+        &[
+            "created_at",
+            "createdAt",
+            "created",
+            "opened_at",
+            "openedAt",
+            "date",
+            "timestamp",
+        ],
+    ) {
+        increment_counter(
+            &mut stats.support_tickets.by_month,
+            created_month.clone(),
+            1,
+        );
+        increment_counter(
+            &mut stats.support_tickets.activity_by_month,
+            created_month,
+            1,
+        );
+    }
+
     if let Some(Value::Array(comments)) = value.get("comments") {
-        stats.support_tickets.comments += comments.len() as u64;
+        let comment_count = comments.len() as u64;
+        stats.support_tickets.comments += comment_count;
+        if comment_count > 0 {
+            stats.support_tickets.tickets_with_comments += 1;
+        }
+
+        for comment in comments {
+            if let Some(month) = pick_timestamp_month(
+                comment,
+                &[
+                    "created_at",
+                    "createdAt",
+                    "date",
+                    "timestamp",
+                    "updated_at",
+                    "updatedAt",
+                ],
+            ) {
+                increment_counter(&mut stats.support_tickets.activity_by_month, month, 1);
+            }
+        }
+    }
+
+    if let Some(month) = pick_timestamp_month(
+        value,
+        &[
+            "updated_at",
+            "updatedAt",
+            "last_activity_at",
+            "lastActivityAt",
+            "closed_at",
+            "closedAt",
+            "resolved_at",
+            "resolvedAt",
+        ],
+    ) {
+        increment_counter(&mut stats.support_tickets.activity_by_month, month, 1);
     }
 }
 
@@ -838,14 +941,8 @@ fn analyze_messages(
         if channel_path.is_file()
             && let Ok(channel_value) = read_json_value(&channel_path)
         {
-            if let Some(channel_type) =
-                channel_value.get("type").and_then(value_to_plain_string)
-            {
-                increment_counter(
-                    &mut stats.messages.by_channel_type,
-                    channel_type,
-                    1,
-                );
+            if let Some(channel_type) = channel_value.get("type").and_then(value_to_plain_string) {
+                increment_counter(&mut stats.messages.by_channel_type, channel_type, 1);
             }
             channel_title_str = channel_title(Some(&channel_value), &channel_title_str);
         }
@@ -859,7 +956,8 @@ fn analyze_messages(
             let attachments = extract_attachment_urls(&record);
 
             // ── Timestamp ──
-            if let Some(ts) = pick_str(&record, &["Timestamp", "timestamp", "timestamp_ms", "date"]) {
+            if let Some(ts) = pick_str(&record, &["Timestamp", "timestamp", "timestamp_ms", "date"])
+            {
                 // hour-of-day
                 if let Some(caps) = hour_re.captures(ts) {
                     if let Ok(hr) = caps[1].parse::<u32>() {
@@ -1012,7 +1110,20 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
         year += 1;
     }
     let leap = is_leap(year);
-    let month_days: [u64; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days: [u64; 12] = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 1u64;
     for md in &month_days {
         if days < *md {
@@ -1031,18 +1142,89 @@ fn is_leap(y: u64) -> bool {
 fn is_stop_word(w: &str) -> bool {
     matches!(
         w,
-        "the" | "and" | "you" | "that" | "was" | "for" | "are" | "with"
-        | "his" | "they" | "this" | "have" | "from" | "one" | "had"
-        | "word" | "but" | "not" | "what" | "all" | "were" | "when"
-        | "your" | "can" | "said" | "there" | "use" | "each" | "which"
-        | "she" | "how" | "their" | "will" | "other" | "about" | "out"
-        | "many" | "then" | "them" | "these" | "some" | "her" | "would"
-        | "make" | "like" | "him" | "into" | "time" | "has" | "look"
-        | "two" | "more" | "write" | "see" | "number" | "way" | "could"
-        | "people" | "than" | "first" | "water" | "been" | "call" | "who"
-        | "oil" | "its" | "now" | "find" | "long" | "down" | "day"
-        | "did" | "get" | "come" | "made" | "may" | "part" | "https"
-        | "http" | "com" | "www" | "net" | "org"
+        "the"
+            | "and"
+            | "you"
+            | "that"
+            | "was"
+            | "for"
+            | "are"
+            | "with"
+            | "his"
+            | "they"
+            | "this"
+            | "have"
+            | "from"
+            | "one"
+            | "had"
+            | "word"
+            | "but"
+            | "not"
+            | "what"
+            | "all"
+            | "were"
+            | "when"
+            | "your"
+            | "can"
+            | "said"
+            | "there"
+            | "use"
+            | "each"
+            | "which"
+            | "she"
+            | "how"
+            | "their"
+            | "will"
+            | "other"
+            | "about"
+            | "out"
+            | "many"
+            | "then"
+            | "them"
+            | "these"
+            | "some"
+            | "her"
+            | "would"
+            | "make"
+            | "like"
+            | "him"
+            | "into"
+            | "time"
+            | "has"
+            | "look"
+            | "two"
+            | "more"
+            | "write"
+            | "see"
+            | "number"
+            | "way"
+            | "could"
+            | "people"
+            | "than"
+            | "first"
+            | "water"
+            | "been"
+            | "call"
+            | "who"
+            | "oil"
+            | "its"
+            | "now"
+            | "find"
+            | "long"
+            | "down"
+            | "day"
+            | "did"
+            | "get"
+            | "come"
+            | "made"
+            | "may"
+            | "part"
+            | "https"
+            | "http"
+            | "com"
+            | "www"
+            | "net"
+            | "org"
     )
 }
 
@@ -1201,6 +1383,47 @@ fn value_to_plain_string(value: &Value) -> Option<String> {
         Value::Null => None,
         _ => Some(value.to_string()),
     }
+}
+
+fn pick_plain_string(record: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = record.get(*key)
+            && let Some(text) = value_to_plain_string(value)
+        {
+            let normalized = text.trim();
+            if !normalized.is_empty() {
+                return Some(normalized.to_owned());
+            }
+        }
+    }
+    None
+}
+
+fn pick_timestamp_month(record: &Value, keys: &[&str]) -> Option<String> {
+    pick_plain_string(record, keys).and_then(|text| parse_year_month(&text))
+}
+
+fn parse_year_month(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    if bytes.len() < 7 {
+        return None;
+    }
+
+    let valid_sep = matches!(bytes[4], b'-' | b'/' | b'.');
+    if !valid_sep
+        || !bytes[0..4].iter().all(u8::is_ascii_digit)
+        || !bytes[5..7].iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+
+    let year = std::str::from_utf8(&bytes[0..4]).ok()?;
+    let month = std::str::from_utf8(&bytes[5..7]).ok()?;
+    if !(("01"..="12").contains(&month)) {
+        return None;
+    }
+
+    Some(format!("{year}-{month}"))
 }
 
 fn increment_counter(map: &mut BTreeMap<String, u64>, key: impl Into<String>, by: u64) {

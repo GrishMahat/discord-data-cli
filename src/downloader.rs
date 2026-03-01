@@ -4,7 +4,7 @@ use std::{
     fs::{self, File},
     io::{BufReader, Read, Write},
     path::{Path, PathBuf},
-    sync::{mpsc, Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::Duration,
 };
@@ -112,8 +112,10 @@ where
     for (i, (url, dedupe_key)) in unique_links.into_iter().enumerate() {
         let category = guess_category(&dedupe_key);
         let base_name = attachment_basename(&dedupe_key);
-        let safe_name =
-            base_name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-', "_");
+        let safe_name = base_name.replace(
+            |c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-',
+            "_",
+        );
         let output_name = format!("attachment_{:06}_{}", i, safe_name);
         let output_path = results_dir.join(category).join(&output_name);
         let temp_path = temp_dir.join(format!("attachment_{:06}.part", i));
@@ -147,12 +149,7 @@ where
                 let Some(task) = task else { break };
 
                 if task.output_path.exists()
-                    && task
-                        .output_path
-                        .metadata()
-                        .map(|m| m.len())
-                        .unwrap_or(0)
-                        > 0
+                    && task.output_path.metadata().map(|m| m.len()).unwrap_or(0) > 0
                 {
                     if let Ok(hash) = hash_file_sha256(&task.output_path) {
                         let path_text = task.output_path.to_string_lossy().to_string();
@@ -323,7 +320,10 @@ where
 
 fn canonical_attachment_key(url: &str) -> String {
     let without_fragment = url.split('#').next().unwrap_or(url);
-    let without_query = without_fragment.split('?').next().unwrap_or(without_fragment);
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
 
     if let Some(rest) = without_query
         .strip_prefix("https://")
@@ -403,8 +403,8 @@ fn load_hash_index(path: &Path) -> Result<AttachmentHashIndex> {
 
 fn save_hash_index(path: &Path, index: &AttachmentHashIndex) -> Result<()> {
     let tmp_path = path.with_extension("json.tmp");
-    let mut file =
-        File::create(&tmp_path).with_context(|| format!("failed to create {}", tmp_path.display()))?;
+    let mut file = File::create(&tmp_path)
+        .with_context(|| format!("failed to create {}", tmp_path.display()))?;
     serde_json::to_writer_pretty(&mut file, index)
         .with_context(|| format!("failed to write {}", tmp_path.display()))?;
     file.write_all(b"\n")
@@ -590,10 +590,7 @@ mod tests {
         }
 
         let request_text = String::from_utf8_lossy(&request);
-        let first_line = request_text
-            .lines()
-            .next()
-            .unwrap_or("");
+        let first_line = request_text.lines().next().unwrap_or("");
         let raw_path = first_line.split_whitespace().nth(1).unwrap_or("/");
         let path = raw_path.split('?').next().unwrap_or(raw_path);
 
