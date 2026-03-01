@@ -7,7 +7,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::{
     analyzer,
-    app_state::{
+    app::{
         ActivityFilterField, AppState, ChannelFilter, HOME_MENU_ITEMS, Screen, SetupStep,
         apply_settings_selection, execute_home_selection, filtered_activity_events,
         filtered_channels, home_item_disabled_reason, is_printable_input, open_activity,
@@ -16,7 +16,7 @@ use crate::{
         screen_disabled_reason, setup_prev_step, setup_submit_step, switch_filter,
         try_load_existing_data,
     },
-    support_activity::SupportTicketView,
+    data::SupportTicketView,
 };
 
 pub(crate) fn handle_paste(app: &mut AppState, text: &str) {
@@ -412,8 +412,11 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
         Screen::Home
             | Screen::Overview
             | Screen::SupportActivity
+            | Screen::SupportTicketDetail
             | Screen::Activity
+            | Screen::ActivityDetail
             | Screen::ChannelList
+            | Screen::MessageView
             | Screen::Settings
     ) && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
     {
@@ -449,6 +452,7 @@ fn cycle_tab_screen(app: &AppState, current: Screen, reverse: bool) -> Screen {
         Screen::ChannelList,
         Screen::Settings,
     ];
+    let current = tab_group_screen(current);
     let current_idx = tabs.iter().position(|s| *s == current).unwrap_or(0);
     let len = tabs.len();
     let next_idx = if reverse {
@@ -472,6 +476,15 @@ fn cycle_tab_screen(app: &AppState, current: Screen, reverse: bool) -> Screen {
     Screen::Home
 }
 
+fn tab_group_screen(screen: Screen) -> Screen {
+    match screen {
+        Screen::SupportTicketDetail => Screen::SupportActivity,
+        Screen::ActivityDetail => Screen::Activity,
+        Screen::MessageView => Screen::ChannelList,
+        other => other,
+    }
+}
+
 fn handle_setup_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
@@ -492,7 +505,9 @@ fn handle_setup_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
                 app.setup.notice = err.to_string();
             }
         }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('u') | KeyCode::Char('U')
+            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
             if app.setup.step != SetupStep::Confirm {
                 app.setup.input.clear();
             }
@@ -512,10 +527,18 @@ fn handle_home_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     let disabled_reason = |idx: usize| home_item_disabled_reason(app, idx);
 
     match key.code {
-        KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('k') => {
+        KeyCode::Up
+        | KeyCode::Char('w')
+        | KeyCode::Char('W')
+        | KeyCode::Char('k')
+        | KeyCode::Char('K') => {
             app.home_cursor = app.home_cursor.saturating_sub(1);
         }
-        KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('j') => {
+        KeyCode::Down
+        | KeyCode::Char('s')
+        | KeyCode::Char('S')
+        | KeyCode::Char('j')
+        | KeyCode::Char('J') => {
             if app.home_cursor + 1 < HOME_MENU_ITEMS.len() {
                 app.home_cursor += 1;
             }
@@ -543,10 +566,10 @@ fn handle_home_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
 
 fn handle_overview_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     match key.code {
-        KeyCode::Char('b') | KeyCode::Esc | KeyCode::Backspace => {
+        KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
             app.screen = Screen::Home;
         }
-        KeyCode::Char('r') => {
+        KeyCode::Char('r') | KeyCode::Char('R') => {
             let results_dir = app.config.results_path(&app.config_path, &app.id);
             app.last_data = analyzer::read_data(&results_dir)?;
             app.status = "Overview refreshed from data.json".to_owned();
@@ -561,19 +584,19 @@ fn handle_support_activity_key(app: &mut AppState, key: KeyEvent) -> Result<()> 
     let ticket_count = app.support_tickets.as_ref().map(|v| v.len()).unwrap_or(0);
 
     match key.code {
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
             app.support_ticket_cursor = app.support_ticket_cursor.saturating_sub(1);
         }
-        KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
             if app.support_ticket_cursor + 1 < ticket_count {
                 app.support_ticket_cursor += 1;
             }
         }
         KeyCode::Enter => open_selected_support_ticket(app),
-        KeyCode::Char('b') | KeyCode::Esc | KeyCode::Backspace => {
+        KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
             app.screen = Screen::Home;
         }
-        KeyCode::Char('r') => {
+        KeyCode::Char('r') | KeyCode::Char('R') => {
             refresh_support_activity_data(app)?;
         }
         _ => {}
@@ -591,7 +614,9 @@ fn handle_activity_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
                 active_filter_mut(app, field).pop();
                 app.activity_cursor = 0;
             }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('u') | KeyCode::Char('U')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 active_filter_mut(app, field).clear();
                 app.activity_cursor = 0;
             }
@@ -608,10 +633,10 @@ fn handle_activity_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
 
     let event_count = filtered_activity_events(app).len();
     match key.code {
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
             app.activity_cursor = app.activity_cursor.saturating_sub(1);
         }
-        KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
             if app.activity_cursor + 1 < event_count {
                 app.activity_cursor += 1;
             }
@@ -623,16 +648,20 @@ fn handle_activity_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
             app.activity_cursor = (app.activity_cursor + 15).min(event_count.saturating_sub(1));
         }
         KeyCode::Char('/') => app.activity_filter_edit = Some(ActivityFilterField::Query),
-        KeyCode::Char('t') => app.activity_filter_edit = Some(ActivityFilterField::EventType),
-        KeyCode::Char('y') => app.activity_filter_edit = Some(ActivityFilterField::SourceFile),
+        KeyCode::Char('t') | KeyCode::Char('T') => {
+            app.activity_filter_edit = Some(ActivityFilterField::EventType)
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            app.activity_filter_edit = Some(ActivityFilterField::SourceFile)
+        }
         KeyCode::Char('[') => app.activity_filter_edit = Some(ActivityFilterField::FromDate),
         KeyCode::Char(']') => app.activity_filter_edit = Some(ActivityFilterField::ToDate),
-        KeyCode::Char('o') => {
+        KeyCode::Char('o') | KeyCode::Char('O') => {
             app.activity_sort = app.activity_sort.next();
             app.activity_cursor = 0;
         }
         KeyCode::Enter => open_selected_activity_event(app),
-        KeyCode::Char('c') => {
+        KeyCode::Char('c') | KeyCode::Char('C') => {
             app.activity_filters.query.clear();
             app.activity_filters.event_type.clear();
             app.activity_filters.source_file.clear();
@@ -640,8 +669,10 @@ fn handle_activity_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
             app.activity_filters.to_date.clear();
             app.activity_cursor = 0;
         }
-        KeyCode::Char('b') | KeyCode::Esc | KeyCode::Backspace => app.screen = Screen::Home,
-        KeyCode::Char('r') => {
+        KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
+            app.screen = Screen::Home
+        }
+        KeyCode::Char('r') | KeyCode::Char('R') => {
             refresh_support_activity_data(app)?;
         }
         _ => {}
@@ -658,10 +689,10 @@ fn handle_support_ticket_detail_key(app: &mut AppState, key: KeyEvent) {
         .unwrap_or(0);
 
     match key.code {
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
             app.support_ticket_scroll = app.support_ticket_scroll.saturating_sub(1);
         }
-        KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
             app.support_ticket_scroll = (app.support_ticket_scroll + 1).min(max_scroll);
         }
         KeyCode::PageUp => {
@@ -670,7 +701,7 @@ fn handle_support_ticket_detail_key(app: &mut AppState, key: KeyEvent) {
         KeyCode::PageDown => {
             app.support_ticket_scroll = (app.support_ticket_scroll + 15).min(max_scroll);
         }
-        KeyCode::Char('b') | KeyCode::Esc | KeyCode::Backspace => {
+        KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
             app.screen = Screen::SupportActivity;
         }
         _ => {}
@@ -685,10 +716,10 @@ fn handle_activity_detail_key(app: &mut AppState, key: KeyEvent) {
         .unwrap_or(0);
 
     match key.code {
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
             app.activity_detail_scroll = app.activity_detail_scroll.saturating_sub(1);
         }
-        KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
             app.activity_detail_scroll = (app.activity_detail_scroll + 1).min(max_scroll);
         }
         KeyCode::PageUp => {
@@ -697,7 +728,7 @@ fn handle_activity_detail_key(app: &mut AppState, key: KeyEvent) {
         KeyCode::PageDown => {
             app.activity_detail_scroll = (app.activity_detail_scroll + 15).min(max_scroll);
         }
-        KeyCode::Char('b') | KeyCode::Esc | KeyCode::Backspace => {
+        KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
             app.screen = Screen::Activity;
         }
         _ => {}
@@ -720,7 +751,7 @@ fn handle_channel_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     if count == 0 {
         if matches!(
             key.code,
-            KeyCode::Char('b') | KeyCode::Esc | KeyCode::Backspace
+            KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace
         ) {
             app.screen = Screen::Home;
         }
@@ -728,18 +759,26 @@ fn handle_channel_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     }
 
     match key.code {
-        KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('k') => {
+        KeyCode::Up
+        | KeyCode::Char('w')
+        | KeyCode::Char('W')
+        | KeyCode::Char('k')
+        | KeyCode::Char('K') => {
             app.channel_cursor = app.channel_cursor.saturating_sub(1);
         }
-        KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('j') => {
+        KeyCode::Down
+        | KeyCode::Char('s')
+        | KeyCode::Char('S')
+        | KeyCode::Char('j')
+        | KeyCode::Char('J') => {
             if app.channel_cursor + 1 < count {
                 app.channel_cursor += 1;
             }
         }
-        KeyCode::PageUp | KeyCode::Char('u') => {
+        KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U') => {
             app.channel_cursor = app.channel_cursor.saturating_sub(20);
         }
-        KeyCode::PageDown | KeyCode::Char('d') => {
+        KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D') => {
             app.channel_cursor = (app.channel_cursor + 20).min(count - 1);
         }
         KeyCode::Enter => {
@@ -750,7 +789,7 @@ fn handle_channel_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
         KeyCode::Char('3') => switch_filter(app, ChannelFilter::GroupDm)?,
         KeyCode::Char('4') => switch_filter(app, ChannelFilter::PublicThread)?,
         KeyCode::Char('5') => switch_filter(app, ChannelFilter::Voice)?,
-        KeyCode::Char('b') | KeyCode::Esc | KeyCode::Backspace => {
+        KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
             app.screen = Screen::Home;
         }
         _ => {}
@@ -763,10 +802,10 @@ fn handle_message_key(app: &mut AppState, key: KeyEvent) {
     let max_scroll = app.open_message_lines.len().saturating_sub(1);
 
     match key.code {
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
             app.open_message_scroll = app.open_message_scroll.saturating_sub(1);
         }
-        KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
             app.open_message_scroll = (app.open_message_scroll + 1).min(max_scroll);
         }
         KeyCode::PageUp => {
@@ -775,7 +814,7 @@ fn handle_message_key(app: &mut AppState, key: KeyEvent) {
         KeyCode::PageDown => {
             app.open_message_scroll = (app.open_message_scroll + 15).min(max_scroll);
         }
-        KeyCode::Char('b') | KeyCode::Esc | KeyCode::Backspace => {
+        KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
             app.screen = Screen::ChannelList;
             app.open_channel = None;
             app.open_message_lines.clear();
@@ -789,29 +828,47 @@ fn handle_settings_key(app: &mut AppState, key: KeyEvent) {
     const ITEMS: usize = 4;
 
     match key.code {
-        KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('k') => {
+        KeyCode::Up
+        | KeyCode::Char('w')
+        | KeyCode::Char('W')
+        | KeyCode::Char('k')
+        | KeyCode::Char('K') => {
             app.settings_cursor = app.settings_cursor.saturating_sub(1);
         }
-        KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('j') => {
+        KeyCode::Down
+        | KeyCode::Char('s')
+        | KeyCode::Char('S')
+        | KeyCode::Char('j')
+        | KeyCode::Char('J') => {
             if app.settings_cursor + 1 < ITEMS {
                 app.settings_cursor += 1;
             }
         }
-        KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('h') => {
+        KeyCode::Left
+        | KeyCode::Char('a')
+        | KeyCode::Char('A')
+        | KeyCode::Char('h')
+        | KeyCode::Char('H') => {
             if app.settings_cursor == 1 {
                 app.settings.preview_messages =
                     app.settings.preview_messages.saturating_sub(5).max(5);
                 app.save_session();
             }
         }
-        KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('l') => {
+        KeyCode::Right
+        | KeyCode::Char('d')
+        | KeyCode::Char('D')
+        | KeyCode::Char('l')
+        | KeyCode::Char('L') => {
             if app.settings_cursor == 1 {
                 app.settings.preview_messages = (app.settings.preview_messages + 5).min(500);
                 app.save_session();
             }
         }
         KeyCode::Enter => apply_settings_selection(app),
-        KeyCode::Char('b') | KeyCode::Esc | KeyCode::Backspace => app.screen = Screen::Home,
+        KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
+            app.screen = Screen::Home
+        }
         _ => {}
     }
 }

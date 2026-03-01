@@ -1,9 +1,9 @@
 mod analyzer;
-mod app_state;
+mod app;
 mod config;
+mod data;
 mod downloader;
 mod input;
-mod support_activity;
 mod ui;
 
 use std::{
@@ -13,7 +13,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use app_state::AppState;
+use app::AppState;
 use crossterm::{
     cursor,
     event::{self, Event, KeyEventKind},
@@ -76,8 +76,8 @@ fn run_tui(app: &mut AppState) -> Result<()> {
 
     while !app.should_quit {
         app.animation_tick = app.animation_tick.wrapping_add(1);
-        app_state::poll_analysis(app);
-        app_state::poll_download(app);
+        app::poll_analysis(app);
+        app::poll_download(app);
 
         terminal
             .draw(|frame| ui::draw_ui(frame, app))

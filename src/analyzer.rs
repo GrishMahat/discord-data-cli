@@ -401,14 +401,14 @@ fn analyze_servers(servers_dir: Option<&Path>, stats: &mut AnalysisData) -> Resu
         return Ok(());
     };
 
-    if let Some(index_path) = find_file_case_insensitive(servers_dir, "index.json")? {
-        if let Ok(index_value) = read_json_value(&index_path) {
-            stats.servers.index_entries = match index_value {
-                Value::Array(items) => items.len() as u64,
-                Value::Object(map) => map.len() as u64,
-                _ => 0,
-            };
-        }
+    if let Some(index_path) = find_file_case_insensitive(servers_dir, "index.json")?
+        && let Ok(index_value) = read_json_value(&index_path)
+    {
+        stats.servers.index_entries = match index_value {
+            Value::Array(items) => items.len() as u64,
+            Value::Object(map) => map.len() as u64,
+            _ => 0,
+        };
     }
 
     for entry in fs::read_dir(servers_dir)? {
@@ -959,17 +959,17 @@ fn analyze_messages(
             if let Some(ts) = pick_str(&record, &["Timestamp", "timestamp", "timestamp_ms", "date"])
             {
                 // hour-of-day
-                if let Some(caps) = hour_re.captures(ts) {
-                    if let Ok(hr) = caps[1].parse::<u32>() {
-                        *hour_freq.entry(hr).or_insert(0) += 1;
-                    }
+                if let Some(caps) = hour_re.captures(ts)
+                    && let Ok(hr) = caps[1].parse::<u32>()
+                {
+                    *hour_freq.entry(hr).or_insert(0) += 1;
                 }
                 // date components
                 if let Some(caps) = date_re.captures(ts) {
                     let month: u32 = caps[2].parse().unwrap_or(0);
                     let day: u32 = caps[3].parse().unwrap_or(0);
                     let year: u32 = caps[1].parse().unwrap_or(0);
-                    if month >= 1 && month <= 12 {
+                    if (1..=12).contains(&month) {
                         *month_freq.entry(month).or_insert(0) += 1;
                     }
                     // Compute day-of-week using Tomohiko Sakamoto algorithm
@@ -979,10 +979,10 @@ fn analyze_messages(
                     }
                     // Track earliest / latest date
                     let date_str = format!("{:04}-{:02}-{:02}", year, month, day);
-                    if first_ts.as_deref().map_or(true, |f| date_str.as_str() < f) {
+                    if first_ts.as_deref().is_none_or(|f| date_str.as_str() < f) {
                         first_ts = Some(date_str.clone());
                     }
-                    if last_ts.as_deref().map_or(true, |l| date_str.as_str() > l) {
+                    if last_ts.as_deref().is_none_or(|l| date_str.as_str() > l) {
                         last_ts = Some(date_str);
                     }
                 }
@@ -1136,7 +1136,7 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
 }
 
 fn is_leap(y: u64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
 }
 
 fn is_stop_word(w: &str) -> bool {

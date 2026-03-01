@@ -9,13 +9,13 @@ use ratatui::{
 
 use crate::{
     analyzer,
-    app_state::{
+    app::{
         ActivityFilterField, AppState, ChannelFilter, ChannelKind, HOME_MENU_ITEMS, Screen,
         SetupStep, filtered_activity_events, filtered_channels, fmt_num, format_duration,
         home_item_disabled_reason, key_help, ratio, screen_disabled_reason, top_counts,
         truncate_text,
     },
-    support_activity::SupportTicketView,
+    data::SupportTicketView,
 };
 
 pub(crate) fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &AppState) {
@@ -707,20 +707,19 @@ fn draw_home_sidebar(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect)
     }
 
     // Most active hour mini chart
-    if !data.messages.temporal.by_hour.is_empty() {
-        if let Some((&peak_hr, &peak_cnt)) = data
+    if !data.messages.temporal.by_hour.is_empty()
+        && let Some((&peak_hr, &peak_cnt)) = data
             .messages
             .temporal
             .by_hour
             .iter()
             .max_by_key(|&(_, c)| c)
-        {
-            lines.push(Line::from(""));
-            lines.push(Line::styled(
-                format!("  Peak {:02}:00  {} msgs", peak_hr, fmt_num(peak_cnt)),
-                Style::default().fg(Color::Cyan),
-            ));
-        }
+    {
+        lines.push(Line::from(""));
+        lines.push(Line::styled(
+            format!("  Peak {:02}:00  {} msgs", peak_hr, fmt_num(peak_cnt)),
+            Style::default().fg(Color::Cyan),
+        ));
     }
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
@@ -1683,20 +1682,17 @@ fn draw_message_view(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect)
             .iter()
             .map(|l| {
                 // Color timestamps
-                if let Some(rest) = l.strip_prefix("- [") {
-                    if let Some(close) = rest.find(']') {
-                        let ts = &rest[..close];
-                        let msg = &rest[close + 1..];
-                        return Line::from(vec![
-                            ratatui::text::Span::styled(
-                                "  [",
-                                Style::default().fg(Color::DarkGray),
-                            ),
-                            ratatui::text::Span::styled(ts, Style::default().fg(Color::Blue)),
-                            ratatui::text::Span::styled("]", Style::default().fg(Color::DarkGray)),
-                            ratatui::text::Span::styled(msg, Style::default().fg(Color::White)),
-                        ]);
-                    }
+                if let Some(rest) = l.strip_prefix("- [")
+                    && let Some(close) = rest.find(']')
+                {
+                    let ts = &rest[..close];
+                    let msg = &rest[close + 1..];
+                    return Line::from(vec![
+                        ratatui::text::Span::styled("  [", Style::default().fg(Color::DarkGray)),
+                        ratatui::text::Span::styled(ts, Style::default().fg(Color::Blue)),
+                        ratatui::text::Span::styled("]", Style::default().fg(Color::DarkGray)),
+                        ratatui::text::Span::styled(msg, Style::default().fg(Color::White)),
+                    ]);
                 }
                 Line::from(l.as_str())
             })

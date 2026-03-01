@@ -232,10 +232,10 @@ where
                     let output_path_text = task.output_path.to_string_lossy().to_string();
                     let is_content_duplicate = {
                         let index = hash_index.lock().unwrap();
-                        match index.hashes.get(&content_hash) {
-                            Some(existing_path) if Path::new(existing_path).exists() => true,
-                            _ => false,
-                        }
+                        matches!(
+                            index.hashes.get(&content_hash),
+                            Some(existing_path) if Path::new(existing_path).exists()
+                        )
                     };
 
                     if is_content_duplicate {

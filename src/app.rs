@@ -1,9 +1,7 @@
 use std::{
     collections::BTreeMap,
-    env,
-    fs::{self, File},
-    io::BufReader,
-    path::{Path, PathBuf},
+    env, fs,
+    path::PathBuf,
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
     time::{Duration, Instant},
@@ -11,10 +9,11 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-use crate::{analyzer, config::AppConfig, downloader, support_activity};
-use support_activity::{ActivityEventPreview, SupportTicketView};
+use crate::{analyzer, config::AppConfig, data, downloader};
+use data::{ActivityEventPreview, SupportTicketView};
+
+pub(crate) use data::{ChannelKind, MessageChannel};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct InteractiveSettings {
@@ -27,38 +26,6 @@ impl Default for InteractiveSettings {
         Self {
             download_attachments: false,
             preview_messages: 40,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct MessageChannel {
-    pub(crate) id: String,
-    pub(crate) title: String,
-    pub(crate) kind: ChannelKind,
-    pub(crate) message_count: usize,
-    pub(crate) messages_path: PathBuf,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ChannelKind {
-    Dm,
-    GroupDm,
-    PublicThread,
-    Voice,
-    Guild,
-    Other,
-}
-
-impl ChannelKind {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            ChannelKind::Dm => "DM",
-            ChannelKind::GroupDm => "GROUP_DM",
-            ChannelKind::PublicThread => "PUBLIC_THREAD",
-            ChannelKind::Voice => "VOICE",
-            ChannelKind::Guild => "GUILD",
-            ChannelKind::Other => "OTHER",
         }
     }
 }
@@ -174,7 +141,7 @@ pub(crate) enum SetupStep {
 
 enum AnalysisEvent {
     Progress(analyzer::AnalysisProgress),
-    Finished(std::result::Result<analyzer::AnalysisData, String>),
+    Finished(Box<std::result::Result<analyzer::AnalysisData, String>>),
 }
 
 enum DownloadEvent {
@@ -253,12 +220,11 @@ pub(crate) struct AppState {
 impl AppState {
     pub(crate) fn new(config_path: PathBuf) -> Result<Self> {
         let mut session: Option<InteractiveSession> = None;
-        if config_path.exists() {
-            if let Ok(content) = fs::read_to_string(&config_path) {
-                if let Ok(parsed) = toml::from_str::<InteractiveSession>(&content) {
-                    session = Some(parsed);
-                }
-            }
+        if config_path.exists()
+            && let Ok(content) = fs::read_to_string(&config_path)
+            && let Ok(parsed) = toml::from_str::<InteractiveSession>(&content)
+        {
+            session = Some(parsed);
         }
 
         let cwd =
@@ -397,7 +363,7 @@ pub(crate) fn home_item_disabled_reason(app: &AppState, idx: usize) -> Option<St
             "Activity Explorer is disabled: activity data was not included in this export."
                 .to_owned(),
         ),
-        4 | 5 | 6 | 7 | 8 | 9 if !folder_available(data, "messages") => Some(
+        4..=9 if !folder_available(data, "messages") => Some(
             "Messages features are disabled: messages data was not included in this export."
                 .to_owned(),
         ),
@@ -598,11 +564,11 @@ pub(crate) fn open_channel_filter(app: &mut AppState, filter: ChannelFilter) -> 
 pub(crate) fn open_support_activity(app: &mut AppState) -> Result<()> {
     try_load_existing_data(app);
 
-    if app.support_tickets.is_none() || app.activity_events.is_none() {
-        if let Err(err) = refresh_support_activity_data(app) {
-            app.status = "Support data loaded with warnings.".to_owned();
-            app.error = Some(err.to_string());
-        }
+    if (app.support_tickets.is_none() || app.activity_events.is_none())
+        && let Err(err) = refresh_support_activity_data(app)
+    {
+        app.status = "Support data loaded with warnings.".to_owned();
+        app.error = Some(err.to_string());
     }
 
     app.screen = Screen::SupportActivity;
@@ -612,11 +578,11 @@ pub(crate) fn open_support_activity(app: &mut AppState) -> Result<()> {
 pub(crate) fn open_activity(app: &mut AppState) -> Result<()> {
     try_load_existing_data(app);
 
-    if app.activity_events.is_none() {
-        if let Err(err) = refresh_support_activity_data(app) {
-            app.status = "Activity loaded with warnings.".to_owned();
-            app.error = Some(err.to_string());
-        }
+    if app.activity_events.is_none()
+        && let Err(err) = refresh_support_activity_data(app)
+    {
+        app.status = "Activity loaded with warnings.".to_owned();
+        app.error = Some(err.to_string());
     }
 
     app.screen = Screen::Activity;
@@ -625,12 +591,8 @@ pub(crate) fn open_activity(app: &mut AppState) -> Result<()> {
 
 pub(crate) fn refresh_support_activity_data(app: &mut AppState) -> Result<()> {
     let package_dir = app.config.package_path(&app.config_path, &app.id);
-    let tickets = support_activity::load_support_tickets(&package_dir, &app.config.source_aliases)?;
-    let events = support_activity::load_recent_activity_events(
-        &package_dir,
-        &app.config.source_aliases,
-        250,
-    )?;
+    let tickets = data::load_support_tickets(&package_dir, &app.config.source_aliases)?;
+    let events = data::load_recent_activity_events(&package_dir, &app.config.source_aliases, 250)?;
 
     app.support_tickets = Some(tickets);
     app.activity_events = Some(events);
@@ -687,7 +649,8 @@ pub(crate) fn open_selected_channel(app: &mut AppState) -> Result<()> {
     };
 
     if let Some(channel) = selected {
-        app.open_message_lines = load_message_preview(&channel, app.settings.preview_messages)?;
+        app.open_message_lines =
+            data::load_message_preview(&channel, app.settings.preview_messages)?;
         app.open_channel = Some(channel);
         app.open_message_scroll = 0;
         app.screen = Screen::MessageView;
@@ -761,7 +724,7 @@ pub(crate) fn start_analysis(app: &mut AppState) {
             let _ = tx.send(AnalysisEvent::Progress(progress));
         })
         .map_err(|err| err.to_string());
-        let _ = tx.send(AnalysisEvent::Finished(result));
+        let _ = tx.send(AnalysisEvent::Finished(Box::new(result)));
     });
 
     app.analysis_rx = Some(rx);
@@ -778,38 +741,40 @@ pub(crate) fn poll_analysis(app: &mut AppState) {
                     app.analysis_progress = progress.fraction.clamp(0.0, 1.0);
                     app.status = progress.label;
                 }
-                Ok(AnalysisEvent::Finished(Ok(data))) => {
-                    app.analysis_running = false;
-                    app.analysis_started_at = None;
-                    app.analysis_progress = 1.0;
-                    app.status = "Analysis finished successfully.".to_owned();
-                    app.error = None;
+                Ok(AnalysisEvent::Finished(result)) => match *result {
+                    Ok(data) => {
+                        app.analysis_running = false;
+                        app.analysis_started_at = None;
+                        app.analysis_progress = 1.0;
+                        app.status = "Analysis finished successfully.".to_owned();
+                        app.error = None;
 
-                    let links = data.messages.attachment_links.clone();
-                    app.last_data = Some(data);
-                    app.channel_cache = None;
-                    app.support_tickets = None;
-                    app.activity_events = None;
-                    finished = true;
+                        let links = data.messages.attachment_links.clone();
+                        app.last_data = Some(data);
+                        app.channel_cache = None;
+                        app.support_tickets = None;
+                        app.activity_events = None;
+                        finished = true;
 
-                    if app.settings.download_attachments && !links.is_empty() {
-                        start_download(app, links);
-                    } else {
-                        app.screen = Screen::Overview;
+                        if app.settings.download_attachments && !links.is_empty() {
+                            start_download(app, links);
+                        } else {
+                            app.screen = Screen::Overview;
+                        }
+
+                        break;
                     }
-
-                    break;
-                }
-                Ok(AnalysisEvent::Finished(Err(err))) => {
-                    app.analysis_running = false;
-                    app.analysis_started_at = None;
-                    app.analysis_progress = 0.0;
-                    app.error = Some(err.clone());
-                    app.status = "Analysis failed.".to_owned();
-                    app.screen = Screen::Home;
-                    finished = true;
-                    break;
-                }
+                    Err(err) => {
+                        app.analysis_running = false;
+                        app.analysis_started_at = None;
+                        app.analysis_progress = 0.0;
+                        app.error = Some(err);
+                        app.status = "Analysis failed.".to_owned();
+                        app.screen = Screen::Home;
+                        finished = true;
+                        break;
+                    }
+                },
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     disconnected = true;
@@ -956,238 +921,20 @@ fn ensure_channels_loaded(app: &mut AppState) -> Result<()> {
     app.status = "Loading channel index...".to_owned();
 
     let package_dir = app.config.package_path(&app.config_path, &app.id);
-    let Some(messages_dir) =
-        resolve_optional_subdir(&package_dir, &app.config.source_aliases.messages)?
-    else {
-        app.channel_cache = Some(Vec::new());
-        app.status = "Messages directory not found".to_owned();
-        return Ok(());
-    };
-
-    let mut channels = Vec::new();
-    for entry in fs::read_dir(&messages_dir)
-        .with_context(|| format!("failed to read {}", messages_dir.display()))?
-    {
-        let entry = entry?;
-        let channel_dir = entry.path();
-        if !channel_dir.is_dir() {
-            continue;
-        }
-
-        let channel_json_path = channel_dir.join("channel.json");
-        let messages_path = channel_dir.join("messages.json");
-        if !messages_path.exists() {
-            continue;
-        }
-
-        let channel_json = if channel_json_path.exists() {
-            read_json_value(&channel_json_path).ok()
-        } else {
-            None
-        };
-
-        let id = channel_json
-            .as_ref()
-            .and_then(|v| v.get("id"))
-            .and_then(value_to_plain_string)
-            .unwrap_or_else(|| {
-                channel_dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_owned()
-            });
-
-        let title = channel_title(channel_json.as_ref(), &id);
-        let kind = detect_channel_kind(channel_json.as_ref());
-        let message_count = count_messages(&messages_path).unwrap_or(0);
-
-        channels.push(MessageChannel {
-            id,
-            title,
-            kind,
-            message_count,
-            messages_path,
-        });
-    }
-
-    channels.sort_by(|a, b| {
-        b.message_count
-            .cmp(&a.message_count)
-            .then_with(|| a.title.cmp(&b.title))
-    });
+    let channels = data::load_channels(&package_dir, &app.config.source_aliases)?;
 
     app.channel_cache = Some(channels);
-    app.status = "Channel index loaded".to_owned();
+    app.status = if app
+        .channel_cache
+        .as_ref()
+        .is_some_and(|channels| channels.is_empty())
+    {
+        "Messages directory not found or empty".to_owned()
+    } else {
+        "Channel index loaded".to_owned()
+    };
 
     Ok(())
-}
-
-fn load_message_preview(channel: &MessageChannel, preview_count: usize) -> Result<Vec<String>> {
-    let messages = read_messages(&channel.messages_path)?;
-    if messages.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let start = messages.len().saturating_sub(preview_count);
-    let mut lines = Vec::new();
-
-    for record in &messages[start..] {
-        let timestamp = pick_str(record, &["Timestamp", "timestamp", "timestamp_ms", "date"])
-            .unwrap_or("unknown");
-        let content = pick_str(
-            record,
-            &["Contents", "Content", "content", "message_content"],
-        )
-        .unwrap_or("");
-        let attachments = pick_str(record, &["Attachments", "attachments"]).unwrap_or("");
-
-        let line = if content.is_empty() && attachments.is_empty() {
-            format!("- [{timestamp}] <empty>")
-        } else if attachments.is_empty() {
-            format!("- [{timestamp}] {content}")
-        } else {
-            format!("- [{timestamp}] {content} | attachments: {attachments}")
-        };
-        lines.push(line);
-    }
-
-    Ok(lines)
-}
-
-fn read_json_value(path: &Path) -> Result<Value> {
-    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-    let reader = BufReader::new(file);
-    serde_json::from_reader(reader).with_context(|| format!("invalid JSON in {}", path.display()))
-}
-
-fn read_messages(path: &Path) -> Result<Vec<Value>> {
-    let value = read_json_value(path)?;
-    match value {
-        Value::Array(items) => Ok(items),
-        Value::Object(mut map) => match map.remove("messages") {
-            Some(Value::Array(items)) => Ok(items),
-            Some(other) => Ok(vec![other]),
-            None => Ok(vec![Value::Object(map)]),
-        },
-        other => Ok(vec![other]),
-    }
-}
-
-fn count_messages(path: &Path) -> Result<usize> {
-    Ok(read_messages(path)?.len())
-}
-
-fn channel_title(channel: Option<&Value>, fallback_id: &str) -> String {
-    let Some(channel) = channel else {
-        return fallback_id.to_owned();
-    };
-
-    if let Some(name) = channel
-        .get("name")
-        .and_then(value_to_plain_string)
-        .filter(|s| !s.trim().is_empty())
-    {
-        return name;
-    }
-
-    if let Some(Value::Array(recipients)) = channel.get("recipients") {
-        let names: Vec<String> = recipients
-            .iter()
-            .filter_map(|item| {
-                if let Value::Object(map) = item {
-                    for key in ["global_name", "username", "name", "id"] {
-                        if let Some(value) = map.get(key).and_then(value_to_plain_string) {
-                            return Some(value);
-                        }
-                    }
-                }
-                value_to_plain_string(item)
-            })
-            .take(4)
-            .collect();
-
-        if !names.is_empty() {
-            return names.join(", ");
-        }
-    }
-
-    fallback_id.to_owned()
-}
-
-fn detect_channel_kind(channel: Option<&Value>) -> ChannelKind {
-    let Some(channel) = channel else {
-        return ChannelKind::Other;
-    };
-
-    let raw_type = channel
-        .get("type")
-        .or_else(|| channel.get("channel_type"))
-        .and_then(value_to_plain_string)
-        .unwrap_or_else(|| "unknown".to_owned())
-        .to_ascii_uppercase();
-
-    if raw_type == "DM" {
-        ChannelKind::Dm
-    } else if raw_type == "GROUP_DM" {
-        ChannelKind::GroupDm
-    } else if raw_type.contains("PUBLIC_THREAD") {
-        ChannelKind::PublicThread
-    } else if raw_type.contains("VOICE") {
-        ChannelKind::Voice
-    } else if raw_type.starts_with("GUILD") {
-        ChannelKind::Guild
-    } else {
-        ChannelKind::Other
-    }
-}
-
-fn resolve_optional_subdir(package_dir: &Path, names: &[String]) -> Result<Option<PathBuf>> {
-    let mut normalized_dirs = BTreeMap::new();
-    for entry in fs::read_dir(package_dir)
-        .with_context(|| format!("failed to read {}", package_dir.display()))?
-    {
-        let entry = entry?;
-        if !entry.path().is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        normalized_dirs.insert(normalize_dir_name(&name), entry.path());
-    }
-
-    for name in names {
-        let key = normalize_dir_name(name);
-        if let Some(path) = normalized_dirs.get(&key) {
-            return Ok(Some(path.clone()));
-        }
-    }
-    Ok(None)
-}
-
-fn normalize_dir_name(name: &str) -> String {
-    name.chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .map(|ch| ch.to_ascii_lowercase())
-        .collect()
-}
-
-fn value_to_plain_string(value: &Value) -> Option<String> {
-    match value {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Null => None,
-        _ => Some(value.to_string()),
-    }
-}
-
-fn pick_str<'a>(record: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    for key in keys {
-        if let Some(Value::String(text)) = record.get(*key) {
-            return Some(text);
-        }
-    }
-    None
 }
 
 fn to_absolute(path: PathBuf) -> Result<PathBuf> {
