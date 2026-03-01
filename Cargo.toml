@@ -16,6 +16,7 @@ unicode-segmentation = "1.12"
 walkdir = "2.5"
 toml = "1.0.3"
 ureq = "3.2.0"
+sha2 = "0.10"
 
 [[bin]]
 name = "discord-analyzer"
