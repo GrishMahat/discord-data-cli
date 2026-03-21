@@ -4,13 +4,25 @@ use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use std::io::Write;
 use crate::{analyzer, config::AppConfig, data, downloader};
+
+fn log_msg(msg: &str) {
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/discord-cli.log")
+    {
+        let now = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+        let _ = writeln!(file, "[{}] {}", now, msg);
+    }
+}
 use data::{ActivityEventPreview, SupportTicketView};
 
 pub(crate) use data::{ChannelKind, MessageChannel};
@@ -146,6 +158,14 @@ enum AnalysisEvent {
     Finished(Box<std::result::Result<analyzer::AnalysisData, String>>),
 }
 
+enum SupportActivityEvent {
+    Finished(std::result::Result<(Vec<SupportTicketView>, Vec<ActivityEventPreview>), String>),
+}
+
+enum GalleryEvent {
+    Finished(std::result::Result<Vec<AttachmentFile>, String>),
+}
+
 enum DownloadEvent {
     Progress(downloader::DownloadProgress),
     Finished(std::result::Result<(), String>),
@@ -218,6 +238,11 @@ pub(crate) struct AppState {
     pub(crate) activity_sort: ActivitySortMode,
     pub(crate) activity_detail_scroll: usize,
     pub(crate) gallery: GalleryState,
+    pub(crate) last_data_mtime: u64,
+    pub(crate) support_activity_loading: bool,
+    support_activity_rx: Option<Receiver<SupportActivityEvent>>,
+    pub(crate) gallery_loading: bool,
+    gallery_rx: Option<Receiver<GalleryEvent>>,
 }
 
 #[derive(Debug, Clone)]
@@ -298,6 +323,11 @@ impl AppState {
                 scroll: 0,
                 category_filter: None,
             },
+            last_data_mtime: 0,
+            support_activity_loading: false,
+            support_activity_rx: None,
+            gallery_loading: false,
+            gallery_rx: None,
         };
 
         if session.is_some() {
@@ -356,12 +386,12 @@ pub(crate) fn execute_home_selection(app: &mut AppState) -> Result<()> {
         3 => open_activity(app)?,
         4 => handle_download_attachments(app),
         5 => open_gallery(app)?,
-        6 => open_channel_filter(app, ChannelFilter::All)?,
-        7 => open_channel_filter(app, ChannelFilter::Dm)?,
-        8 => open_channel_filter(app, ChannelFilter::GroupDm)?,
-        9 => open_channel_filter(app, ChannelFilter::PublicThread)?,
-        10 => open_channel_filter(app, ChannelFilter::Voice)?,
-        11 => app.screen = Screen::Settings,
+        6 => open_channel_filter(app, ChannelFilter::Dm)?, // DMs & Groups
+        7 => open_channel_filter(app, ChannelFilter::PublicThread)?, // Threads / Voice
+        8 => open_channel_filter(app, ChannelFilter::All)?, // Full Archive
+        9 => app.status = "Export features coming soon.".to_owned(), // Export to CSV
+        10 => app.screen = Screen::Settings,
+        11 => app.status = "Help docs coming soon. Use Tab, arrows, and Enter.".to_owned(),
         12 => app.should_quit = true,
         _ => {}
     }
@@ -598,11 +628,8 @@ pub(crate) fn open_channel_filter(app: &mut AppState, filter: ChannelFilter) -> 
 pub(crate) fn open_support_activity(app: &mut AppState) -> Result<()> {
     try_load_existing_data(app);
 
-    if (app.support_tickets.is_none() || app.activity_events.is_none())
-        && let Err(err) = refresh_support_activity_data(app)
-    {
-        app.status = "Support data loaded with warnings.".to_owned();
-        app.error = Some(err.to_string());
+    if app.support_tickets.is_none() || app.activity_events.is_none() {
+        start_support_activity_load(app);
     }
 
     app.screen = Screen::SupportActivity;
@@ -612,34 +639,172 @@ pub(crate) fn open_support_activity(app: &mut AppState) -> Result<()> {
 pub(crate) fn open_activity(app: &mut AppState) -> Result<()> {
     try_load_existing_data(app);
 
-    if app.activity_events.is_none()
-        && let Err(err) = refresh_support_activity_data(app)
-    {
-        app.status = "Activity loaded with warnings.".to_owned();
-        app.error = Some(err.to_string());
+    if app.activity_events.is_none() {
+        start_support_activity_load(app);
     }
 
     app.screen = Screen::Activity;
     Ok(())
 }
 
+pub(crate) fn start_support_activity_load(app: &mut AppState) {
+    if app.support_activity_loading {
+        return;
+    }
+
+    app.support_activity_loading = true;
+    app.status = "Loading support/activity data in background...".to_owned();
+    
+    let (tx, rx) = mpsc::channel();
+    let package_dir = app.config.package_path(&app.config_path, &app.id);
+    let aliases = app.config.source_aliases.clone();
+    
+    thread::spawn(move || {
+        let tickets_res = data::load_support_tickets(&package_dir, &aliases);
+        let activity_res = data::load_recent_activity_events(&package_dir, &aliases, 250);
+        
+        let result = match (tickets_res, activity_res) {
+            (Ok(t), Ok(a)) => Ok((t, a)),
+            (Err(e), _) => Err(e.to_string()),
+            (_, Err(e)) => Err(e.to_string()),
+        };
+        
+        let _ = tx.send(SupportActivityEvent::Finished(result));
+    });
+    
+    app.support_activity_rx = Some(rx);
+}
+
+pub(crate) fn poll_support_activity(app: &mut AppState) {
+    if let Some(rx) = &app.support_activity_rx {
+        match rx.try_recv() {
+            Ok(SupportActivityEvent::Finished(result)) => {
+                app.support_activity_loading = false;
+                match result {
+                    Ok((tickets, events)) => {
+                        app.support_tickets = Some(tickets);
+                        app.activity_events = Some(events);
+                        app.status = "Support/activity data loaded.".to_owned();
+                    }
+                    Err(e) => {
+                        app.error = Some(format!("Failed to load data: {}", e));
+                        app.status = "Support/activity load failed.".to_owned();
+                    }
+                }
+                app.support_activity_rx = None;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                app.support_activity_loading = false;
+                app.support_activity_rx = None;
+            }
+        }
+    }
+}
+
 pub(crate) fn refresh_support_activity_data(app: &mut AppState) -> Result<()> {
     let package_dir = app.config.package_path(&app.config_path, &app.id);
+    
+    let start = Instant::now();
+    log_msg("Refreshing support/activity data...");
+    
     let tickets = data::load_support_tickets(&package_dir, &app.config.source_aliases)?;
+    log_msg(&format!("Tickets loaded: {} in {:?}", tickets.len(), start.elapsed()));
+    
+    let activity_start = Instant::now();
     let events = data::load_recent_activity_events(&package_dir, &app.config.source_aliases, 250)?;
-
+    log_msg(&format!("Recent activity loaded: {} in {:?}", events.len(), activity_start.elapsed()));
+    
     app.support_tickets = Some(tickets);
     app.activity_events = Some(events);
-
+    app.status = format!("Loaded {} tickets and {} events", 
+        app.support_tickets.as_ref().map(|v| v.len()).unwrap_or(0),
+        app.activity_events.as_ref().map(|v| v.len()).unwrap_or(0)
+    );
+    
     Ok(())
 }
 
 pub(crate) fn open_gallery(app: &mut AppState) -> Result<()> {
-    refresh_gallery_data(app)?;
+    if app.gallery.files.is_empty() {
+        start_gallery_load(app);
+    }
     app.screen = Screen::Gallery;
     app.gallery.cursor = 0;
     app.gallery.scroll = 0;
     Ok(())
+}
+
+pub(crate) fn start_gallery_load(app: &mut AppState) {
+    if app.gallery_loading {
+        return;
+    }
+    
+    app.gallery_loading = true;
+    app.status = "Scanning attachments in background...".to_owned();
+    
+    let (tx, rx) = mpsc::channel();
+    let config = app.config.clone();
+    let config_path = app.config_path.clone();
+    let id = app.id.clone();
+    
+    thread::spawn(move || {
+        let results_dir = config.results_path(&config_path, &id);
+        let mut files = Vec::new();
+        
+        if results_dir.exists() {
+            let categories = [
+                "imgs", "vids", "audios", "docs", "txts", "codes", "data", "exes", "zips", "unknowns",
+            ];
+            
+            for cat in categories {
+                let cat_dir = results_dir.join(cat);
+                if cat_dir.is_dir() {
+                    if let Ok(entries) = fs::read_dir(cat_dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() {
+                                let name = path.file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("unknown")
+                                    .to_owned();
+                                let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                                files.push(AttachmentFile {
+                                    name,
+                                    _path: path,
+                                    size,
+                                    category: cat.to_owned(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let _ = tx.send(GalleryEvent::Finished(Ok(files)));
+    });
+    
+    app.gallery_rx = Some(rx);
+}
+
+pub(crate) fn poll_gallery(app: &mut AppState) {
+    if let Some(rx) = &app.gallery_rx {
+        match rx.try_recv() {
+            Ok(GalleryEvent::Finished(result)) => {
+                app.gallery_loading = false;
+                if let Ok(files) = result {
+                    app.gallery.files = files;
+                    app.status = format!("Gallery loaded with {} files.", app.gallery.files.len());
+                }
+                app.gallery_rx = None;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                app.gallery_loading = false;
+                app.gallery_rx = None;
+            }
+        }
+    }
 }
 
 pub(crate) fn refresh_gallery_data(app: &mut AppState) -> Result<()> {
@@ -779,9 +944,36 @@ pub(crate) fn format_duration(duration: Duration) -> String {
 }
 
 pub(crate) fn try_load_existing_data(app: &mut AppState) {
+    // Only load if we don't have data yet. 
+    // Navigation should not trigger a disk sync by default.
+    // If the user wants a refresh, they have the 'R' key.
+    if app.last_data.is_some() {
+        return;
+    }
+
     let results_dir = app.config.results_path(&app.config_path, &app.id);
+    let data_path = results_dir.join("data.json");
+    if !data_path.exists() {
+        return;
+    }
+
+    let start = Instant::now();
+    log_msg("Starting lazy data load...");
+    
     if let Ok(data) = analyzer::read_data(&results_dir) {
+        let elapsed = start.elapsed();
+        log_msg(&format!("Data loaded in {:?}", elapsed));
         app.last_data = data;
+        
+        let mtime = fs::metadata(&data_path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        app.last_data_mtime = mtime;
+    } else {
+        log_msg("Data load FAILED");
     }
 }
 
@@ -834,6 +1026,11 @@ pub(crate) fn poll_analysis(app: &mut AppState) {
 
                         let links = data.messages.attachment_links.clone();
                         app.last_data = Some(data);
+                        app.last_data_mtime = SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .ok()
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
                         app.channel_cache = None;
                         app.support_tickets = None;
                         app.activity_events = None;
@@ -1004,6 +1201,38 @@ fn ensure_channels_loaded(app: &mut AppState) -> Result<()> {
     app.status = "Loading channel index...".to_owned();
 
     let package_dir = app.config.package_path(&app.config_path, &app.id);
+    
+    // Check if we already have the counts in our analysis data
+    if let Some(data) = &app.last_data {
+        let mut channels = Vec::new();
+        for (id, cached) in &data.channels_cache {
+            let channel_dir = package_dir.join("messages").join(id);
+            if !channel_dir.is_dir() {
+                continue;
+            }
+
+            channels.push(MessageChannel {
+                id: id.clone(),
+                title: cached.channel_title.clone(),
+                kind: data::detect_channel_kind_str(&cached.channel_type),
+                message_count: cached.message_count as usize,
+                messages_path: channel_dir.join("messages.json"),
+            });
+        }
+
+        if !channels.is_empty() {
+            channels.sort_by(|a, b| {
+                b.message_count
+                    .cmp(&a.message_count)
+                    .then_with(|| a.title.cmp(&b.title))
+            });
+            app.channel_cache = Some(channels);
+            app.status = "Channel index loaded from cache".to_owned();
+            return Ok(());
+        }
+    }
+
+    // Fallback to disk scanning if no analysis data or empty
     let channels = data::load_channels(&package_dir, &app.config.source_aliases)?;
 
     app.channel_cache = Some(channels);
@@ -1014,7 +1243,7 @@ fn ensure_channels_loaded(app: &mut AppState) -> Result<()> {
     {
         "Messages directory not found or empty".to_owned()
     } else {
-        "Channel index loaded".to_owned()
+        "Channel index loaded from disk".to_owned()
     };
 
     Ok(())

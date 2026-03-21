@@ -392,8 +392,17 @@ fn rect_contains(rect: Rect, x: u16, y: u16) -> bool {
 }
 
 pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
+    // Handle Ctrl+C globally for quitting
+    if matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        app.should_quit = true;
+        return Ok(());
+    }
+
     if app.screen == Screen::Analyzing || app.screen == Screen::Downloading {
-        // Prevent key events while locked in processing screens unless it's Ctrl+C
+        // Prevent most key events while locked in processing screens
+        // But allow Ctrl+C (already handled above)
         return Ok(());
     }
 
@@ -422,6 +431,7 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
             | Screen::ActivityDetail
             | Screen::ChannelList
             | Screen::MessageView
+            | Screen::Gallery
             | Screen::Settings
     ) && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
     {

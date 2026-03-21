@@ -1413,7 +1413,7 @@ fn draw_hour_chart(frame: &mut ratatui::Frame<'_>, data: &analyzer::AnalysisData
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if data.messages.temporal.by_hour.is_empty() {
+    if data.messages.temporal.by_hour.is_empty() || inner.height < 2 || inner.width < 24 {
         return;
     }
 

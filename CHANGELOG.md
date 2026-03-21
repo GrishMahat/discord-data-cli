@@ -22,9 +22,13 @@ All notable changes to this project will be documented in this file.
 - **Hardened Error Handling**: Improved error context for filesystem operations across the analysis pipeline.
 
 ### Bug Fixes
+- **UI Freeze and Hang Resolution**: Completely resolved a critical issue where the application would freeze during tab navigation or interactions with large datasets.
+- **Background Threading**: Refactored `Channel`, `Support`, `Activity`, and `Gallery` data loaders to operate entirely on background threads. Data loading no longer blocks the main UI thread.
+- **Lazy Caching System**: Implemented an advanced lazy caching system to skip redundant disk reads and reuse in-memory data for instant channel navigation.
+- **Streaming Record Counts**: Optimized `data::utils::count_records` to use a stream-based count. Huge JSON and NDJSON files are no longer fully loaded into memory just to determine their length.
+- **Universal Exit Guarantee**: Moved `Ctrl+C` interrupt handling directly into the application's root loop so users can safely exit even during intensive ops.
 - Fixed potential memory blowouts when previewing channels with 100k+ messages.
 - Resolved inconsistent date parsing between different export sections.
-
 ---
 
 ## [v0.1.2] - 2026-03-11

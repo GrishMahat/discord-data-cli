@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
 };
 
@@ -51,9 +51,47 @@ pub(crate) fn read_records_json_or_ndjson(path: &Path) -> Result<Vec<Value>> {
 }
 
 pub(crate) fn count_records(path: &Path) -> Result<usize> {
-    // For efficiency, we can try counting without storing everything if it's large,
-    // but for now read_records_json_or_ndjson is simpler.
-    Ok(read_records_json_or_ndjson(path)?.len())
+    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    
+    // Check if it's a JSON array by looking at the first non-whitespace byte
+    let mut first_byte = [0u8; 1];
+    let is_json_array = loop {
+        match reader.read_exact(&mut first_byte) {
+            Ok(_) => {
+                if !first_byte[0].is_ascii_whitespace() {
+                    break first_byte[0] == b'[';
+                }
+            }
+            Err(_) => break false,
+        }
+    };
+
+    // Re-open to start from beginning
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+
+    if is_json_array {
+        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<Value>();
+        let mut count = 0;
+        for item in stream {
+            if item.is_ok() {
+                count += 1;
+            }
+        }
+        Ok(count)
+    } else {
+        // Assume NDJSON - count lines
+        let mut count = 0;
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                if !l.trim().is_empty() {
+                    count += 1;
+                }
+            }
+        }
+        Ok(count)
+    }
 }
 
 pub(crate) fn find_file_case_insensitive(dir: &Path, file_name: &str) -> Result<Option<PathBuf>> {

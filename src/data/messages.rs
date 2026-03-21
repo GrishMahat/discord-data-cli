@@ -142,18 +142,8 @@ fn count_messages(path: &Path) -> Result<usize> {
     count_records(path)
 }
 
-fn detect_channel_kind(channel: Option<&Value>) -> ChannelKind {
-    let Some(channel) = channel else {
-        return ChannelKind::Other;
-    };
-
-    let raw_type = channel
-        .get("type")
-        .or_else(|| channel.get("channel_type"))
-        .and_then(value_to_plain_string)
-        .unwrap_or_else(|| "unknown".to_owned())
-        .to_ascii_uppercase();
-
+pub(crate) fn detect_channel_kind_str(raw_type: &str) -> ChannelKind {
+    let raw_type = raw_type.to_ascii_uppercase();
     if raw_type == "DM" {
         ChannelKind::Dm
     } else if raw_type == "GROUP_DM" {
@@ -167,4 +157,18 @@ fn detect_channel_kind(channel: Option<&Value>) -> ChannelKind {
     } else {
         ChannelKind::Other
     }
+}
+
+fn detect_channel_kind(channel: Option<&Value>) -> ChannelKind {
+    let Some(channel) = channel else {
+        return ChannelKind::Other;
+    };
+
+    let raw_type = channel
+        .get("type")
+        .or_else(|| channel.get("channel_type"))
+        .and_then(value_to_plain_string)
+        .unwrap_or_else(|| "unknown".to_owned());
+    
+    detect_channel_kind_str(&raw_type)
 }

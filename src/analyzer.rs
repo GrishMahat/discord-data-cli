@@ -135,7 +135,7 @@ pub struct Messages {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContentStats {
     pub distinct_characters: usize,
-    pub character_frequency: BTreeMap<String, u64>,
+    pub character_frequency: BTreeMap<char, u64>,
     pub top_words: Vec<(String, u64)>,
     pub emoji_unicode: u64,
     pub emoji_custom: u64,
@@ -152,7 +152,7 @@ impl ContentStats {
         self.emoji_unicode += other.emoji_unicode;
 
         for (ch, count) in &other.character_frequency {
-            *self.character_frequency.entry(ch.clone()).or_insert(0) += count;
+            *self.character_frequency.entry(*ch).or_insert(0) += count;
         }
     }
 }
@@ -400,10 +400,10 @@ pub fn read_data(results_dir: &Path) -> Result<Option<AnalysisData>> {
     if !data_path.exists() {
         return Ok(None);
     }
-    let data = fs::read_to_string(&data_path)
-        .with_context(|| format!("failed to read {}", data_path.display()))?;
+    let file = File::open(&data_path).with_context(|| format!("failed to open {}", data_path.display()))?;
+    let reader = BufReader::new(file);
     let parsed: AnalysisData =
-        serde_json::from_str(&data).with_context(|| "failed to parse data.json".to_owned())?;
+        serde_json::from_reader(reader).with_context(|| "failed to parse data.json".to_owned())?;
     Ok(Some(parsed))
 }
 
@@ -1008,9 +1008,7 @@ fn analyze_messages(
                     *total_word_freq.entry(w.clone()).or_insert(0) += c;
                 }
                 for (ch, c) in &cached.content.character_frequency {
-                    if let Some(first_char) = ch.chars().next() {
-                        *total_char_freq.entry(first_char).or_insert(0) += c;
-                    }
+                    *total_char_freq.entry(*ch).or_insert(0) += c;
                 }
 
                 channel_counts.push((cached.channel_title.clone(), cached.message_count));
@@ -1117,7 +1115,7 @@ fn analyze_messages(
                                         if emojis::get(g).is_some() { ch_stats.content.emoji_unicode += 1; }
                                     }
                                     for ch in content.chars() {
-                                        *ch_stats.content.character_frequency.entry(ch.to_string()).or_insert(0) += 1;
+                                        *ch_stats.content.character_frequency.entry(ch).or_insert(0) += 1;
                                     }
                                     for mat in w_re.find_iter(&content.to_ascii_lowercase()) {
                                         let w = mat.as_str();
@@ -1163,9 +1161,7 @@ fn analyze_messages(
                         *total_word_freq.entry(w.clone()).or_insert(0) += c;
                     }
                     for (ch, c) in &cache_entry.content.character_frequency {
-                        if let Some(first_char) = ch.chars().next() {
-                            *total_char_freq.entry(first_char).or_insert(0) += c;
-                        }
+                        *total_char_freq.entry(*ch).or_insert(0) += c;
                     }
 
                     channel_counts.push((cache_entry.channel_title.clone(), cache_entry.message_count));
