@@ -20,6 +20,11 @@ use unicode_segmentation::UnicodeSegmentation;
 use walkdir::WalkDir;
 
 use crate::config::{AppConfig, SourceAliases};
+use crate::data::utils::{
+    channel_title, extract_attachment_urls, extract_message_content, find_file_case_insensitive,
+    pick_plain_string, pick_str, pick_timestamp_month, read_json_value, read_records_json_or_ndjson,
+    resolve_optional_subdir, value_to_plain_string,
+};
 
 // ── Top-level output ────────────────────────────────────────────────────────
 
@@ -425,6 +430,11 @@ fn analyze_servers(servers_dir: Option<&Path>, stats: &mut AnalysisData) -> Resu
         }
     }
     Ok(())
+}
+
+fn count_json_records(path: &Path) -> Result<u64> {
+    use crate::data::utils::count_records;
+    Ok(count_records(path).unwrap_or(0) as u64)
 }
 
 fn analyze_support_tickets(support_dir: Option<&Path>, stats: &mut AnalysisData) -> Result<()> {
@@ -1228,204 +1238,6 @@ fn is_stop_word(w: &str) -> bool {
     )
 }
 
-fn read_json_value(path: &Path) -> Result<Value> {
-    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-    serde_json::from_reader(file).with_context(|| format!("invalid JSON in {}", path.display()))
-}
-
-fn read_records_json_or_ndjson(path: &Path) -> Result<Vec<Value>> {
-    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-    let reader = BufReader::new(file);
-    match serde_json::from_reader::<_, Value>(reader) {
-        Ok(Value::Array(items)) => Ok(items),
-        Ok(single) => Ok(vec![single]),
-        Err(_) => {
-            let file = File::open(path)
-                .with_context(|| format!("failed to re-open {}", path.display()))?;
-            let reader = BufReader::new(file);
-            let mut rows = Vec::new();
-            for line in reader.lines() {
-                let line = line?;
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                if let Ok(value) = serde_json::from_str::<Value>(line) {
-                    rows.push(value);
-                }
-            }
-            Ok(rows)
-        }
-    }
-}
-
-fn count_json_records(path: &Path) -> Result<u64> {
-    match read_json_value(path) {
-        Ok(Value::Array(items)) => Ok(items.len() as u64),
-        Ok(Value::Object(map)) => Ok(map.len() as u64),
-        Ok(_) => Ok(1),
-        Err(_) => {
-            let file =
-                File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-            let reader = BufReader::new(file);
-            let mut count = 0_u64;
-            for line in reader.lines() {
-                let line = line?;
-                if !line.trim().is_empty() {
-                    count += 1;
-                }
-            }
-            Ok(count)
-        }
-    }
-}
-
-fn find_file_case_insensitive(dir: &Path, file_name: &str) -> Result<Option<PathBuf>> {
-    let target = file_name.to_ascii_lowercase();
-    for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
-        let entry = entry?;
-        if !entry.path().is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-        if name == target {
-            return Ok(Some(entry.path()));
-        }
-    }
-    Ok(None)
-}
-
-fn resolve_optional_subdir(package_dir: &Path, names: &[String]) -> Result<Option<PathBuf>> {
-    let mut normalized_dirs: HashMap<String, PathBuf> = HashMap::new();
-    for entry in fs::read_dir(package_dir)
-        .with_context(|| format!("failed to read {}", package_dir.display()))?
-    {
-        let entry = entry?;
-        if !entry.path().is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        normalized_dirs.insert(normalize_dir_name(&name), entry.path());
-    }
-
-    for name in names {
-        let key = normalize_dir_name(name);
-        if let Some(path) = normalized_dirs.get(&key) {
-            return Ok(Some(path.clone()));
-        }
-    }
-    Ok(None)
-}
-
-fn normalize_dir_name(name: &str) -> String {
-    name.chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .map(|ch| ch.to_ascii_lowercase())
-        .collect()
-}
-
-fn extract_message_content(record: &Value) -> String {
-    for key in ["Contents", "Content", "content", "message_content"] {
-        if let Some(value) = record.get(key)
-            && let Some(s) = value_to_plain_string(value)
-        {
-            return s;
-        }
-    }
-    String::new()
-}
-
-fn extract_attachment_urls(record: &Value) -> Vec<String> {
-    for key in ["Attachments", "attachments"] {
-        if let Some(value) = record.get(key) {
-            return attachment_value_to_urls(value);
-        }
-    }
-    Vec::new()
-}
-
-fn attachment_value_to_urls(value: &Value) -> Vec<String> {
-    match value {
-        Value::String(text) => text
-            .split_whitespace()
-            .map(ToOwned::to_owned)
-            .filter(|s| !s.is_empty())
-            .collect(),
-        Value::Array(items) => {
-            let mut out = Vec::new();
-            for item in items {
-                match item {
-                    Value::String(s) => out.push(s.clone()),
-                    Value::Object(map) => {
-                        if let Some(url) = map.get("url").and_then(value_to_plain_string) {
-                            out.push(url);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            out
-        }
-        Value::Object(map) => map
-            .get("url")
-            .and_then(value_to_plain_string)
-            .map(|s| vec![s])
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    }
-}
-
-fn value_to_plain_string(value: &Value) -> Option<String> {
-    match value {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Null => None,
-        _ => Some(value.to_string()),
-    }
-}
-
-fn pick_plain_string(record: &Value, keys: &[&str]) -> Option<String> {
-    for key in keys {
-        if let Some(value) = record.get(*key)
-            && let Some(text) = value_to_plain_string(value)
-        {
-            let normalized = text.trim();
-            if !normalized.is_empty() {
-                return Some(normalized.to_owned());
-            }
-        }
-    }
-    None
-}
-
-fn pick_timestamp_month(record: &Value, keys: &[&str]) -> Option<String> {
-    pick_plain_string(record, keys).and_then(|text| parse_year_month(&text))
-}
-
-fn parse_year_month(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    if bytes.len() < 7 {
-        return None;
-    }
-
-    let valid_sep = matches!(bytes[4], b'-' | b'/' | b'.');
-    if !valid_sep
-        || !bytes[0..4].iter().all(u8::is_ascii_digit)
-        || !bytes[5..7].iter().all(u8::is_ascii_digit)
-    {
-        return None;
-    }
-
-    let year = std::str::from_utf8(&bytes[0..4]).ok()?;
-    let month = std::str::from_utf8(&bytes[5..7]).ok()?;
-    if !(("01"..="12").contains(&month)) {
-        return None;
-    }
-
-    Some(format!("{year}-{month}"))
-}
-
 fn increment_counter(map: &mut BTreeMap<String, u64>, key: impl Into<String>, by: u64) {
     let entry = map.entry(key.into()).or_insert(0);
     *entry += by;
@@ -1450,50 +1262,4 @@ fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
         .map(|idx| idx + 1)
         .unwrap_or(start);
     &bytes[start..end]
-}
-
-fn pick_str<'a>(record: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    for key in keys {
-        if let Some(Value::String(text)) = record.get(*key) {
-            return Some(text);
-        }
-    }
-    None
-}
-
-fn channel_title(channel: Option<&Value>, fallback_id: &str) -> String {
-    let Some(channel) = channel else {
-        return fallback_id.to_owned();
-    };
-
-    if let Some(name) = channel
-        .get("name")
-        .and_then(value_to_plain_string)
-        .filter(|s| !s.trim().is_empty())
-    {
-        return name;
-    }
-
-    if let Some(Value::Array(recipients)) = channel.get("recipients") {
-        let names: Vec<String> = recipients
-            .iter()
-            .filter_map(|item| {
-                if let Value::Object(map) = item {
-                    for key in ["global_name", "username", "name", "id"] {
-                        if let Some(value) = map.get(key).and_then(value_to_plain_string) {
-                            return Some(value);
-                        }
-                    }
-                }
-                value_to_plain_string(item)
-            })
-            .take(4)
-            .collect();
-
-        if !names.is_empty() {
-            return names.join(", ");
-        }
-    }
-
-    fallback_id.to_owned()
 }

@@ -1,7 +1,5 @@
 use std::{
-    collections::BTreeMap,
-    fs::{self, File},
-    io::BufReader,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -9,6 +7,10 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 
 use crate::config::SourceAliases;
+use crate::data::utils::{
+    channel_title, count_records, pick_str, read_json_value, read_records_json_or_ndjson,
+    resolve_optional_subdir, value_to_plain_string,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct MessageChannel {
@@ -110,7 +112,7 @@ pub(crate) fn load_message_preview(
     channel: &MessageChannel,
     preview_count: usize,
 ) -> Result<Vec<String>> {
-    let messages = read_messages(&channel.messages_path)?;
+    let messages = read_records_json_or_ndjson(&channel.messages_path)?;
     if messages.is_empty() {
         return Ok(Vec::new());
     }
@@ -141,64 +143,8 @@ pub(crate) fn load_message_preview(
     Ok(lines)
 }
 
-fn read_json_value(path: &Path) -> Result<Value> {
-    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-    let reader = BufReader::new(file);
-    serde_json::from_reader(reader).with_context(|| format!("invalid JSON in {}", path.display()))
-}
-
-fn read_messages(path: &Path) -> Result<Vec<Value>> {
-    let value = read_json_value(path)?;
-    match value {
-        Value::Array(items) => Ok(items),
-        Value::Object(mut map) => match map.remove("messages") {
-            Some(Value::Array(items)) => Ok(items),
-            Some(other) => Ok(vec![other]),
-            None => Ok(vec![Value::Object(map)]),
-        },
-        other => Ok(vec![other]),
-    }
-}
-
 fn count_messages(path: &Path) -> Result<usize> {
-    Ok(read_messages(path)?.len())
-}
-
-fn channel_title(channel: Option<&Value>, fallback_id: &str) -> String {
-    let Some(channel) = channel else {
-        return fallback_id.to_owned();
-    };
-
-    if let Some(name) = channel
-        .get("name")
-        .and_then(value_to_plain_string)
-        .filter(|s| !s.trim().is_empty())
-    {
-        return name;
-    }
-
-    if let Some(Value::Array(recipients)) = channel.get("recipients") {
-        let names: Vec<String> = recipients
-            .iter()
-            .filter_map(|item| {
-                if let Value::Object(map) = item {
-                    for key in ["global_name", "username", "name", "id"] {
-                        if let Some(value) = map.get(key).and_then(value_to_plain_string) {
-                            return Some(value);
-                        }
-                    }
-                }
-                value_to_plain_string(item)
-            })
-            .take(4)
-            .collect();
-
-        if !names.is_empty() {
-            return names.join(", ");
-        }
-    }
-
-    fallback_id.to_owned()
+    count_records(path)
 }
 
 fn detect_channel_kind(channel: Option<&Value>) -> ChannelKind {
@@ -226,52 +172,4 @@ fn detect_channel_kind(channel: Option<&Value>) -> ChannelKind {
     } else {
         ChannelKind::Other
     }
-}
-
-fn resolve_optional_subdir(package_dir: &Path, names: &[String]) -> Result<Option<PathBuf>> {
-    let mut normalized_dirs = BTreeMap::new();
-    for entry in fs::read_dir(package_dir)
-        .with_context(|| format!("failed to read {}", package_dir.display()))?
-    {
-        let entry = entry?;
-        if !entry.path().is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        normalized_dirs.insert(normalize_dir_name(&name), entry.path());
-    }
-
-    for name in names {
-        let key = normalize_dir_name(name);
-        if let Some(path) = normalized_dirs.get(&key) {
-            return Ok(Some(path.clone()));
-        }
-    }
-    Ok(None)
-}
-
-fn normalize_dir_name(name: &str) -> String {
-    name.chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .map(|ch| ch.to_ascii_lowercase())
-        .collect()
-}
-
-fn value_to_plain_string(value: &Value) -> Option<String> {
-    match value {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Null => None,
-        _ => Some(value.to_string()),
-    }
-}
-
-fn pick_str<'a>(record: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    for key in keys {
-        if let Some(Value::String(text)) = record.get(*key) {
-            return Some(text);
-        }
-    }
-    None
 }
