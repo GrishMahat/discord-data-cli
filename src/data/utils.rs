@@ -247,3 +247,132 @@ pub(crate) fn channel_title(channel: Option<&Value>, fallback_id: &str) -> Strin
 
     fallback_id.to_owned()
 }
+
+pub(crate) fn read_records_tail(path: &Path, n: usize) -> Result<Vec<Value>> {
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+
+    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let metadata = file.metadata()?;
+    let file_size = metadata.len();
+
+    // If it's a small file, just use the easy way
+    if file_size < 128 * 1024 {
+        let all = read_records_json_or_ndjson(path)?;
+        let start = all.len().saturating_sub(n);
+        let items: Vec<Value> = all.into_iter().skip(start).collect();
+        return Ok(items);
+    }
+
+    // Larger file: check if it's NDJSON by looking at the first 1KB
+    let mut head = vec![0u8; 1024.min(file_size as usize)];
+    {
+        use std::io::Read;
+        let mut f = File::open(path)?;
+        f.read_exact(&mut head).ok();
+    }
+
+    let is_json_array = head.iter().any(|&b| !b.is_ascii_whitespace() && b == b'[');
+
+    if is_json_array {
+        // Standard JSON array: we must stream from start to find the tail
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<Value>();
+        let mut tail = std::collections::VecDeque::with_capacity(n);
+        for item in stream {
+            if let Ok(value) = item {
+                if tail.len() >= n {
+                    tail.pop_front();
+                }
+                tail.push_back(value);
+            }
+        }
+        Ok(tail.into_iter().collect())
+    } else {
+        // Assume NDJSON or similar: use seeking logic (like activity.rs)
+        read_ndjson_tail(path, n, 512 * 1024)
+    }
+}
+
+pub(crate) fn read_ndjson_tail(path: &Path, n: usize, max_tail_bytes: u64) -> Result<Vec<Value>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = File::open(path)?;
+    let size = metadata_size(path).unwrap_or(0);
+    let start = size.saturating_sub(max_tail_bytes);
+    file.seek(SeekFrom::Start(start))?;
+
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+
+    let mut records = Vec::new();
+    let content = String::from_utf8_lossy(&buffer);
+    let mut lines: Vec<&str> = content.lines().collect();
+
+    // If we sought into the middle, the first line might be partial
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0);
+    }
+
+    for line in lines.into_iter().rev() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(val) = serde_json::from_str::<Value>(line) {
+            records.push(val);
+            if records.len() >= n {
+                break;
+            }
+        }
+    }
+
+    records.reverse();
+    Ok(records)
+}
+
+pub(crate) fn truncate_text(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    if text.chars().count() <= max_chars {
+        return text.to_owned();
+    }
+    let kept = max_chars.saturating_sub(1);
+    format!("{}…", text.chars().take(kept).collect::<String>())
+}
+
+pub(crate) fn normalize_inline(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub(crate) fn parse_date_key(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    if bytes.len() < 10 {
+        return None;
+    }
+    let date = &bytes[0..10];
+    if date[0..4].iter().all(u8::is_ascii_digit)
+        && date[4] == b'-'
+        && date[5..7].iter().all(u8::is_ascii_digit)
+        && date[7] == b'-'
+        && date[8..10].iter().all(u8::is_ascii_digit)
+    {
+        return Some(String::from_utf8_lossy(date).to_string());
+    }
+    None
+}
+
+pub(crate) fn normalize_sort_key(timestamp: &str) -> String {
+    let normalized: String = timestamp.chars().filter(|ch| ch.is_ascii_digit()).collect();
+    if normalized.is_empty() {
+        timestamp.to_owned()
+    } else {
+        normalized
+    }
+}
+
+fn metadata_size(path: &Path) -> Option<u64> {
+    fs::metadata(path).ok().map(|m| m.len())
+}

@@ -11,11 +11,11 @@ use crate::{
     analyzer,
     app::{
         ActivityFilterField, AppState, ChannelFilter, ChannelKind, HOME_MENU_ITEMS, Screen,
-        SetupStep, filtered_activity_events, filtered_channels, fmt_num, format_duration,
-        home_item_disabled_reason, key_help, ratio, screen_disabled_reason, top_counts,
-        truncate_text,
+        SetupStep, filtered_activity_events, filtered_channels, filtered_gallery_files, fmt_num,
+        format_duration, home_item_disabled_reason, key_help, ratio, screen_disabled_reason,
+        top_counts,
     },
-    data::SupportTicketView,
+    data::{utils::truncate_text, SupportTicketView},
 };
 
 pub(crate) fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &AppState) {
@@ -57,6 +57,7 @@ pub(crate) fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &AppState) {
         Screen::ActivityDetail => draw_activity_detail(frame, app, chunks[2]),
         Screen::ChannelList => draw_channels(frame, app, chunks[2]),
         Screen::MessageView => draw_message_view(frame, app, chunks[2]),
+        Screen::Gallery => draw_gallery(frame, app, chunks[2]),
         Screen::Settings => draw_settings(frame, app, chunks[2]),
         _ => {}
     }
@@ -165,6 +166,7 @@ fn draw_tabs(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
         (Screen::SupportActivity, "Support"),
         (Screen::Activity, "Activity"),
         (Screen::ChannelList, "Channels"),
+        (Screen::Gallery, "Gallery"),
         (Screen::Settings, "Settings"),
     ];
 
@@ -208,12 +210,43 @@ fn tab_group_screen(screen: Screen) -> Screen {
 
 fn draw_statusbar(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let help = key_help(app.screen);
-    let bar = Paragraph::new(Line::from(vec![
-        ratatui::text::Span::styled(" ? ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+    let mut spans = vec![
+        ratatui::text::Span::styled(" ? ", Style::default().fg(Color::Black).bg(Color::Cyan)),
         ratatui::text::Span::raw(" "),
-        ratatui::text::Span::styled(help, Style::default().fg(Color::DarkGray)),
-    ]))
-    .block(
+    ];
+
+    let mut current = help;
+    while let Some(start) = current.find('[') {
+        if let Some(end_offset) = current[start..].find(']') {
+            let end = start + end_offset;
+            // Text before the bracketed key
+            if start > 0 {
+                spans.push(ratatui::text::Span::styled(
+                    &current[..start],
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            // The bracketed key itself, highlighted
+            spans.push(ratatui::text::Span::styled(
+                &current[start..=end],
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            current = &current[end + 1..];
+        } else {
+            break;
+        }
+    }
+    // Remaining text after the last bracketed key
+    if !current.is_empty() {
+        spans.push(ratatui::text::Span::styled(
+            current,
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    let bar = Paragraph::new(Line::from(spans)).block(
         Block::default()
             .borders(Borders::TOP)
             .border_style(Style::default().fg(Color::DarkGray)),
@@ -589,9 +622,7 @@ fn draw_home(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let list = List::new(items)
         .block(
             Block::default()
-                .borders(Borders::ALL)
-                .title(" Menu ")
-                .border_style(Style::default().fg(Color::Cyan)),
+                .title(" Menu [↑↓ Select, Enter Open] ")
         )
         .highlight_style(
             Style::default()
@@ -1034,7 +1065,7 @@ fn draw_support_activity(frame: &mut ratatui::Frame<'_>, app: &AppState, area: R
             Block::default()
                 .borders(Borders::ALL)
                 .title(format!(
-                    " Support Tickets ({})  enter: open ",
+                    " Support Tickets: {} [↑↓ Select, Enter View] ",
                     tickets.len()
                 ))
                 .border_style(Style::default().fg(Color::Cyan)),
@@ -1146,7 +1177,7 @@ fn draw_activity(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Activity Events ")
+                    .title(" Activity Feed [No matches] ")
                     .border_style(Style::default().fg(Color::Cyan)),
             ),
             cols[0],
@@ -1192,7 +1223,7 @@ fn draw_activity(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" enter: open selected activity ")
+                .title(" Activity Feed [↑↓ Browse, Enter Detail, / Search] ")
                 .border_style(Style::default().fg(Color::Cyan)),
         )
         .highlight_style(
@@ -1267,13 +1298,13 @@ fn draw_support_ticket_detail(frame: &mut ratatui::Frame<'_>, app: &AppState, ar
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Support Ticket ")
+            .title(" Ticket Info ")
             .border_style(Style::default().fg(Color::Cyan)),
     );
     frame.render_widget(info, rows[0]);
 
     let scroll_indicator = format!(
-        " Ticket Detail  scroll: {}/{}",
+        " Ticket Content: line {}/{} [↑↓ Scroll, B Back] ",
         app.support_ticket_scroll + 1,
         ticket.detail_lines.len().max(1)
     );
@@ -1334,13 +1365,13 @@ fn draw_activity_detail(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Re
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Activity Event ")
+            .title(" Event Info ")
             .border_style(Style::default().fg(Color::Cyan)),
     );
     frame.render_widget(info, rows[0]);
 
     let scroll_indicator = format!(
-        " Event Detail  scroll: {}/{}",
+        " Event Detail: line {}/{} [↑↓ Scroll, B Back] ",
         app.activity_detail_scroll + 1,
         event.detail.lines().count().max(1)
     );
@@ -1459,7 +1490,7 @@ fn draw_channels(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let channels = filtered_channels(app);
 
     let filter_tabs = "  1:All  2:DMs  3:Groups  4:Threads  5:Voice";
-    let title = format!(" Channels [{}] ", app.current_filter.label());
+    let title = format!(" Channels: {} [↑↓ Select, Enter Messages, 1-5 Filter] ", app.current_filter.label());
 
     if channels.is_empty() {
         frame.render_widget(
@@ -1475,7 +1506,7 @@ fn draw_channels(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(title)
+                    .title(format!(" Channels: {} [No matches] ", app.current_filter.label()))
                     .border_style(Style::default().fg(Color::Cyan)),
             ),
             area,
@@ -1671,7 +1702,7 @@ fn draw_message_view(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Messages ")
+                    .title(" Messages [No Content] ")
                     .border_style(Style::default().fg(Color::Cyan)),
             ),
             rows[1],
@@ -1699,7 +1730,7 @@ fn draw_message_view(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect)
             .collect();
 
         let scroll_indicator = format!(
-            " Messages  scroll: {}/{}",
+            " Messages: line {}/{} [↑↓ Scroll, B Back] ",
             app.open_message_scroll + 1,
             app.open_message_lines.len()
         );
@@ -1762,9 +1793,7 @@ fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let list = List::new(items)
         .block(
             Block::default()
-                .borders(Borders::ALL)
-                .title(" Settings ")
-                .border_style(Style::default().fg(Color::Cyan)),
+                .title(" Settings [↑↓ Select, ←→ Adjust, Enter Toggle] ")
         )
         .highlight_style(
             Style::default()
@@ -1949,5 +1978,111 @@ fn render_filter_value(value: &str) -> String {
         "∅".to_owned()
     } else {
         truncate_text(value.trim(), 18)
+    }
+}
+
+fn draw_gallery(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
+    let files = filtered_gallery_files(app);
+    let categories = [
+        (None, "All"),
+        (Some("imgs"), "Images"),
+        (Some("vids"), "Videos"),
+        (Some("audios"), "Audio"),
+        (Some("docs"), "Docs"),
+        (Some("txts"), "Text"),
+        (Some("codes"), "Code"),
+        (Some("zips"), "Archives"),
+        (None, "Others"),
+    ];
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(5)])
+        .split(area);
+
+    // Filter tabs
+    let mut tab_spans = Vec::new();
+    for (i, (opt, label)) in categories.iter().enumerate() {
+        let active = match (&app.gallery.category_filter, opt) {
+            (None, None) => i == 0, // "All" is the first None
+            (Some(f), Some(o)) => f == o,
+            _ => false,
+        };
+        let (num_key, label_text) = if i < 9 {
+            (format!("{}", i + 1), *label)
+        } else {
+            ("?".to_owned(), *label)
+        };
+        
+        let style = if active {
+            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        tab_spans.push(ratatui::text::Span::styled(format!(" {num_key}:{label_text} "), style));
+        if i < categories.len() - 1 {
+            tab_spans.push(ratatui::text::Span::raw(" "));
+        }
+    }
+    frame.render_widget(Paragraph::new(Line::from(tab_spans)), chunks[0]);
+
+    if files.is_empty() {
+        frame.render_widget(
+            Paragraph::new("\n  No files found in this category.\n  Make sure you have downloaded attachments first.")
+                .block(Block::default().borders(Borders::ALL).title(" Gallery ")
+                .border_style(Style::default().fg(Color::Cyan))),
+            chunks[1]
+        );
+        return;
+    }
+
+    let visible_rows = chunks[1].height.saturating_sub(2) as usize;
+    let page_size = visible_rows.max(1);
+    let start = app.gallery.cursor.saturating_sub(page_size / 2).min(files.len().saturating_sub(page_size));
+    let end = (start + page_size).min(files.len());
+
+    let mut items = Vec::new();
+    for (local_idx, file) in files[start..end].iter().enumerate() {
+        let idx = start + local_idx + 1;
+        let cat_color = match file.category.as_str() {
+            "imgs" => Color::Green,
+            "vids" => Color::Yellow,
+            "audios" => Color::Magenta,
+            "docs" => Color::Blue,
+            "codes" | "txts" => Color::Cyan,
+            "zips" | "exes" => Color::Red,
+            _ => Color::DarkGray,
+        };
+
+        let file_info = Line::from(vec![
+            ratatui::text::Span::styled(format!("{idx:>4} "), Style::default().fg(Color::DarkGray)),
+            ratatui::text::Span::styled(format!("{:<10} ", file.category), Style::default().fg(cat_color)),
+            ratatui::text::Span::styled(truncate_text(&file.name, 45), Style::default().fg(Color::White)),
+            ratatui::text::Span::raw("  "),
+            ratatui::text::Span::styled(format_size(file.size), Style::default().fg(Color::DarkGray)),
+        ]);
+        items.push(ListItem::new(file_info));
+    }
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(format!(" Gallery: {} files discovered ", files.len()))
+        .border_style(Style::default().fg(Color::Cyan)))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .highlight_symbol("");
+
+    let mut state = ListState::default();
+    state.select(Some(app.gallery.cursor.saturating_sub(start)));
+    frame.render_stateful_widget(list, chunks[1], &mut state);
+}
+
+fn format_size(size: u64) -> String {
+    if size < 1024 {
+        format!("{} B", size)
+    } else if size < 1024 * 1024 {
+        format!("{:.1} KB", size as f64 / 1024.0)
+    } else if size < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 }

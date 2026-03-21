@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "discord-data-analyzer-rs"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "crossterm 0.29.0",

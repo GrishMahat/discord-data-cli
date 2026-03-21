@@ -65,6 +65,7 @@ pub(crate) enum Screen {
     Settings,
     Analyzing,
     Downloading,
+    Gallery,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +111,7 @@ pub(crate) struct ActivityFilters {
     pub(crate) to_date: String,
 }
 
-pub(crate) const HOME_MENU_ITEMS: [(&str, &str); 12] = [
+pub(crate) const HOME_MENU_ITEMS: [(&str, &str); 13] = [
     ("Analyze Now", "Run full analysis on your Discord export"),
     ("Overview", "View analysis summary and statistics"),
     ("Support Tickets", "Browse support tickets with details"),
@@ -122,6 +123,7 @@ pub(crate) const HOME_MENU_ITEMS: [(&str, &str); 12] = [
         "Download Attachments",
         "Download media files from your messages",
     ),
+    ("Gallery", "Browse and search through downloaded attachments"),
     ("Messages (All)", "Browse all message channels"),
     ("DMs", "Browse direct message channels"),
     ("Group DMs", "Browse group direct messages"),
@@ -215,6 +217,23 @@ pub(crate) struct AppState {
     pub(crate) activity_filter_edit: Option<ActivityFilterField>,
     pub(crate) activity_sort: ActivitySortMode,
     pub(crate) activity_detail_scroll: usize,
+    pub(crate) gallery: GalleryState,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GalleryState {
+    pub(crate) files: Vec<AttachmentFile>,
+    pub(crate) cursor: usize,
+    pub(crate) scroll: usize,
+    pub(crate) category_filter: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AttachmentFile {
+    pub(crate) name: String,
+    pub(crate) _path: PathBuf,
+    pub(crate) size: u64,
+    pub(crate) category: String,
 }
 
 impl AppState {
@@ -273,6 +292,12 @@ impl AppState {
             activity_filter_edit: None,
             activity_sort: ActivitySortMode::Newest,
             activity_detail_scroll: 0,
+            gallery: GalleryState {
+                files: Vec::new(),
+                cursor: 0,
+                scroll: 0,
+                category_filter: None,
+            },
         };
 
         if session.is_some() {
@@ -330,13 +355,14 @@ pub(crate) fn execute_home_selection(app: &mut AppState) -> Result<()> {
         2 => open_support_activity(app)?,
         3 => open_activity(app)?,
         4 => handle_download_attachments(app),
-        5 => open_channel_filter(app, ChannelFilter::All)?,
-        6 => open_channel_filter(app, ChannelFilter::Dm)?,
-        7 => open_channel_filter(app, ChannelFilter::GroupDm)?,
-        8 => open_channel_filter(app, ChannelFilter::PublicThread)?,
-        9 => open_channel_filter(app, ChannelFilter::Voice)?,
-        10 => app.screen = Screen::Settings,
-        11 => app.should_quit = true,
+        5 => open_gallery(app)?,
+        6 => open_channel_filter(app, ChannelFilter::All)?,
+        7 => open_channel_filter(app, ChannelFilter::Dm)?,
+        8 => open_channel_filter(app, ChannelFilter::GroupDm)?,
+        9 => open_channel_filter(app, ChannelFilter::PublicThread)?,
+        10 => open_channel_filter(app, ChannelFilter::Voice)?,
+        11 => app.screen = Screen::Settings,
+        12 => app.should_quit = true,
         _ => {}
     }
 
@@ -363,7 +389,15 @@ pub(crate) fn home_item_disabled_reason(app: &AppState, idx: usize) -> Option<St
             "Activity Explorer is disabled: activity data was not included in this export."
                 .to_owned(),
         ),
-        4..=9 if !folder_available(data, "messages") => Some(
+        4 if !folder_available(data, "messages") => Some(
+            "Attachment Downloader is disabled: messages data was not included in this export."
+                .to_owned(),
+        ),
+        5 if !folder_available(data, "messages") => Some(
+            "Gallery is disabled: messages data was not included in this export."
+                .to_owned(),
+        ),
+        6..=10 if !folder_available(data, "messages") => Some(
             "Messages features are disabled: messages data was not included in this export."
                 .to_owned(),
         ),
@@ -397,7 +431,7 @@ pub(crate) fn screen_disabled_reason(app: &AppState, screen: Screen) -> Option<S
         Screen::Activity if !folder_available(data, "activity") => {
             Some("Activity is disabled: source data was not included in this export.".to_owned())
         }
-        Screen::ChannelList if !folder_available(data, "messages") => {
+        Screen::ChannelList | Screen::Gallery if !folder_available(data, "messages") => {
             Some("Channels is disabled: messages data was not included in this export.".to_owned())
         }
         _ => None,
@@ -597,28 +631,72 @@ pub(crate) fn refresh_support_activity_data(app: &mut AppState) -> Result<()> {
     app.support_tickets = Some(tickets);
     app.activity_events = Some(events);
 
-    let ticket_count = app.support_tickets.as_ref().map(|v| v.len()).unwrap_or(0);
-    if ticket_count == 0 {
-        app.support_ticket_cursor = 0;
-        app.support_ticket_scroll = 0;
-    } else {
-        app.support_ticket_cursor = app.support_ticket_cursor.min(ticket_count - 1);
-        app.support_ticket_scroll = 0;
-    }
-
-    let event_count = app.activity_events.as_ref().map(|v| v.len()).unwrap_or(0);
-    app.activity_cursor = 0;
-    app.activity_filter_edit = None;
-    app.activity_sort = ActivitySortMode::Newest;
-    app.activity_detail_scroll = 0;
-    app.status = format!(
-        "Support & Activity refreshed: {} tickets, {} recent events",
-        fmt_num(ticket_count as u64),
-        fmt_num(event_count as u64)
-    );
-    app.error = None;
-
     Ok(())
+}
+
+pub(crate) fn open_gallery(app: &mut AppState) -> Result<()> {
+    refresh_gallery_data(app)?;
+    app.screen = Screen::Gallery;
+    app.gallery.cursor = 0;
+    app.gallery.scroll = 0;
+    Ok(())
+}
+
+pub(crate) fn refresh_gallery_data(app: &mut AppState) -> Result<()> {
+    let results_dir = app.config.results_path(&app.config_path, &app.id);
+    let mut files = Vec::new();
+    
+    if results_dir.exists() {
+        let categories = [
+            "imgs", "vids", "audios", "docs", "txts", "codes", "data", "exes", "zips", "unknowns",
+        ];
+        
+        for cat in categories {
+            let cat_dir = results_dir.join(cat);
+            if cat_dir.is_dir() {
+                if let Ok(entries) = fs::read_dir(cat_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() {
+                            let name = path.file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("unknown")
+                                .to_owned();
+                            let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                            files.push(AttachmentFile {
+                                name,
+                                _path: path,
+                                size,
+                                category: cat.to_owned(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+    app.gallery.files = files;
+    Ok(())
+}
+
+pub(crate) fn filtered_gallery_files(app: &AppState) -> Vec<AttachmentFile> {
+    if let Some(cat) = &app.gallery.category_filter {
+        app.gallery.files
+            .iter()
+            .filter(|f| f.category == *cat)
+            .cloned()
+            .collect()
+    } else {
+        app.gallery.files.clone()
+    }
+}
+
+pub(crate) fn switch_gallery_filter(app: &mut AppState, category: Option<String>) {
+    app.gallery.category_filter = category;
+    app.gallery.cursor = 0;
+    app.gallery.scroll = 0;
 }
 
 pub(crate) fn open_selected_support_ticket(app: &mut AppState) {
@@ -661,25 +739,30 @@ pub(crate) fn open_selected_channel(app: &mut AppState) -> Result<()> {
 
 pub(crate) fn key_help(screen: Screen) -> &'static str {
     match screen {
-        Screen::Setup => "type/paste value  enter: next  left/up: back  esc: quit",
+        Screen::Setup => "type/paste value  [Enter] Next  [Left/Up] Back  [Esc] Quit",
         Screen::Home => {
-            "tab/shift-tab: switch tab  w/s/↑↓: move  enter: select  1-9: quick pick  click: select  q: quit"
+            "[W/S / ↑↓] Select  [Enter] Open  [1-9] Quick choose  [Tab] Next Tab  [Q] Quit"
         }
-        Screen::Overview => "tab/shift-tab: switch tab  r: refresh  b/esc: back  q: quit",
+        Screen::Overview => "[R] Refresh data  [Tab] Next Tab  [B / Esc] Back to menu  [Q] Quit",
         Screen::SupportActivity => {
-            "tab/shift-tab: switch tab  ↑↓: select ticket  enter: open  r: reload  b/esc: back  q: quit"
+            "[↑↓] Choose ticket  [Enter] View detail  [R] Reload  [Tab] Next Tab  [B / Esc] Back"
         }
-        Screen::SupportTicketDetail => "↑↓/k/j: scroll  pgup/dn: page  b/esc: back",
+        Screen::SupportTicketDetail => "[↑↓ / K / J] Scroll  [PgUp/Dn] Page  [B / Esc] Done",
         Screen::Activity => {
-            "tab/shift-tab: switch tab  ↑↓: browse  enter: open  / t y [ ]: filters  o: sort  c: clear  r: reload  b/esc: back  q: quit"
+            "[↑↓] Browse  [Enter] Details  [/ Search] [T/Y/[] Filter  [O] Sort  [C] Clear  [R] Refresh  [B] Back"
         }
-        Screen::ActivityDetail => "↑↓/k/j: scroll  pgup/dn: page  b/esc: back",
-        Screen::ChannelList => "w/s/↑↓: move  u/d pgup/dn: page  1-5: filter  enter: open  b: back",
-        Screen::MessageView => "↑↓/k/j: scroll  pgup/dn: page  b/esc: back",
+        Screen::ActivityDetail => "[↑↓ / K / J] Scroll  [PgUp/Dn] Page  [B / Esc] Done",
+        Screen::ChannelList => {
+            "[W/S / ↑↓] Navigate  [1-5] Filter type  [Enter] View messages  [B / Esc] Back"
+        }
+        Screen::MessageView => "[↑↓ / K / J] Scroll content  [PgUp/Dn] Page  [B / Esc] Back to list",
+        Screen::Gallery => {
+            "[↑↓] Select  [1-9] Category Filter  [B / Esc] Back to menu"
+        }
         Screen::Settings => {
-            "tab/shift-tab: switch tab  w/s/↑↓: move  ←→: adjust  enter: toggle/apply  b/esc: back  q: quit"
+            "[W/S / ↑↓] Select  [←→] Adjust  [Enter] Toggle/Apply  [B / Esc] Back"
         }
-        Screen::Analyzing | Screen::Downloading => "Please wait...",
+        Screen::Analyzing | Screen::Downloading => "Current operation in progress... [Please Wait]",
     }
 }
 
@@ -972,18 +1055,6 @@ pub(crate) fn fmt_num(n: u64) -> String {
     }
     result.chars().rev().collect()
 }
-
-pub(crate) fn truncate_text(text: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-    if text.chars().count() <= max_chars {
-        return text.to_owned();
-    }
-    let kept = max_chars.saturating_sub(1);
-    format!("{}…", text.chars().take(kept).collect::<String>())
-}
-
 pub(crate) fn top_counts(map: &BTreeMap<String, u64>, limit: usize) -> Vec<(String, u64)> {
     let mut items: Vec<(String, u64)> = map.iter().map(|(k, v)| (k.clone(), *v)).collect();
     items.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -1090,23 +1161,4 @@ fn activity_event_matches_filters(event: &ActivityEventPreview, filters: &Activi
     true
 }
 
-fn normalize_date_filter(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let bytes = trimmed.as_bytes();
-    if bytes.len() < 10 {
-        return None;
-    }
-    let date = &bytes[0..10];
-    if date[0..4].iter().all(u8::is_ascii_digit)
-        && date[4] == b'-'
-        && date[5..7].iter().all(u8::is_ascii_digit)
-        && date[7] == b'-'
-        && date[8..10].iter().all(u8::is_ascii_digit)
-    {
-        return Some(String::from_utf8_lossy(date).to_string());
-    }
-    None
-}
+use crate::data::utils::parse_date_key as normalize_date_filter;

@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap, VecDeque},
     fs::{self, File},
-    io::{BufRead, BufReader, BufWriter, Write},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -52,11 +52,38 @@ pub struct AnalysisData {
     /// Installed programs detected in the export.
     pub programs: Programs,
 
-    // ── Legacy flat fields kept for backward compat (hidden from pretty JSON) ──
+    /// Legacy flat fields kept for backward compat (hidden from pretty JSON)
     #[serde(skip)]
     pub package_directory: String,
     #[serde(skip)]
     pub results_directory: String,
+
+    /// Cache for incremental analysis (hidden from pretty JSON)
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub channels_cache: BTreeMap<String, ChannelAnalysisCache>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub activity_cache: BTreeMap<String, ActivityFileCache>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelAnalysisCache {
+    pub mtime_messages: u64,
+    pub mtime_channel: u64,
+    pub message_count: u64,
+    pub messages_with_content: u64,
+    pub channel_type: String,
+    pub channel_title: String,
+    pub temporal: Temporal,
+    pub content: ContentStats,
+    pub word_frequency: BTreeMap<String, u64>,
+    pub attachment_count: u64,
+    pub attachment_links: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ActivityFileCache {
+    pub mtime_ms: u64,
+    pub stats: ActivityFileStats,
 }
 
 // ── Meta ────────────────────────────────────────────────────────────────────
@@ -107,36 +134,66 @@ pub struct Messages {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContentStats {
-    /// Number of distinct Unicode code points used.
     pub distinct_characters: usize,
-    /// Frequency of each character (sorted by character).
     pub character_frequency: BTreeMap<String, u64>,
-    /// Top-100 words (excluding stop-words), sorted by frequency.
     pub top_words: Vec<(String, u64)>,
-    /// Total Unicode emoji used (e.g. 😀).
     pub emoji_unicode: u64,
-    /// Total custom Discord emoji used (e.g. <:name:123>).
     pub emoji_custom: u64,
-    /// Total line-breaks across all message contents.
     pub linebreaks: u64,
-    /// Average characters per message (messages with content only).
     pub avg_length_chars: f64,
-    /// Total characters across all messages.
     pub total_chars: u64,
+}
+
+impl ContentStats {
+    pub(crate) fn merge(&mut self, other: &Self) {
+        self.total_chars += other.total_chars;
+        self.linebreaks += other.linebreaks;
+        self.emoji_custom += other.emoji_custom;
+        self.emoji_unicode += other.emoji_unicode;
+
+        for (ch, count) in &other.character_frequency {
+            *self.character_frequency.entry(ch.clone()).or_insert(0) += count;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Temporal {
-    /// ISO-8601 date of the oldest message found.
     pub first_message_date: Option<String>,
-    /// ISO-8601 date of the newest message found.
     pub last_message_date: Option<String>,
-    /// Messages bucketed by hour-of-day (0–23).
     pub by_hour: BTreeMap<u32, u64>,
-    /// Messages bucketed by day-of-week (0 = Monday … 6 = Sunday).
     pub by_day_of_week: BTreeMap<u32, u64>,
-    /// Messages bucketed by month (1 = January … 12 = December).
     pub by_month: BTreeMap<u32, u64>,
+}
+
+impl Temporal {
+    pub(crate) fn merge(&mut self, other: &Self) {
+        if self.first_message_date.is_none()
+            || (other.first_message_date.is_some()
+                && other.first_message_date.as_ref().unwrap()
+                    < self.first_message_date.as_ref().unwrap())
+        {
+            self.first_message_date = other.first_message_date.clone();
+        }
+
+        if self.last_message_date.is_none()
+            || (other.last_message_date.is_some()
+                && other.last_message_date.as_ref().unwrap()
+                    > self.last_message_date.as_ref().unwrap())
+        {
+            self.last_message_date = other.last_message_date.clone();
+        }
+
+        for (h, c) in &other.by_hour {
+            *self.by_hour.entry(*h).or_insert(0) += c;
+        }
+        for (d, c) in &other.by_day_of_week {
+            *self.by_day_of_week.entry(*d).or_insert(0) += c;
+        }
+        for (m, c) in &other.by_month {
+            *self.by_month.entry(*m).or_insert(0) += c;
+        }
+    }
 }
 
 // ── Servers ──────────────────────────────────────────────────────────────────
@@ -240,6 +297,7 @@ where
 
     let source_dirs = SourceDirs::discover(&package_dir, &config.source_aliases)?;
 
+    let existing_data = read_data(&results_dir).ok().flatten();
     let mut stats = AnalysisData {
         meta: Meta {
             tool_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -250,6 +308,12 @@ where
         folder_presence: source_dirs.presence_map(),
         package_directory: package_dir.display().to_string(),
         results_directory: results_dir.display().to_string(),
+        channels_cache: existing_data.as_ref()
+            .map(|d| d.channels_cache.clone())
+            .unwrap_or_default(),
+        activity_cache: existing_data.as_ref()
+            .map(|d| d.activity_cache.clone())
+            .unwrap_or_default(),
         ..AnalysisData::default()
     };
 
@@ -406,14 +470,14 @@ fn analyze_servers(servers_dir: Option<&Path>, stats: &mut AnalysisData) -> Resu
         return Ok(());
     };
 
-    if let Some(index_path) = find_file_case_insensitive(servers_dir, "index.json")?
-        && let Ok(index_value) = read_json_value(&index_path)
-    {
-        stats.servers.index_entries = match index_value {
-            Value::Array(items) => items.len() as u64,
-            Value::Object(map) => map.len() as u64,
-            _ => 0,
-        };
+    if let Some(index_path) = find_file_case_insensitive(servers_dir, "index.json")? {
+        if let Ok(index_value) = read_json_value(&index_path) {
+            stats.servers.index_entries = match index_value {
+                Value::Array(items) => items.len() as u64,
+                Value::Object(map) => map.len() as u64,
+                _ => 0,
+            };
+        }
     }
 
     for entry in fs::read_dir(servers_dir)? {
@@ -483,11 +547,11 @@ struct ActivityFileTask {
     short_name: String,
 }
 
-#[derive(Debug, Default)]
-struct ActivityFileStats {
-    event_lines: u64,
-    parse_errors: u64,
-    event_types: HashMap<String, u64>,
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ActivityFileStats {
+    pub event_lines: u64,
+    pub parse_errors: u64,
+    pub event_types: BTreeMap<String, u64>,
 }
 
 enum ActivityWorkerEvent {
@@ -500,7 +564,7 @@ enum ActivityWorkerEvent {
         stats: ActivityFileStats,
     },
     Failed {
-        file_index: usize,
+        _file_index: usize,
         error: String,
     },
 }
@@ -534,38 +598,64 @@ where
         return Ok(());
     }
 
-    let tasks: Vec<ActivityFileTask> = files
-        .into_iter()
-        .enumerate()
-        .map(|(index, path)| {
-            let size = fs::metadata(&path).map(|m| m.len().max(1)).unwrap_or(1);
-            let short_name = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown.json")
-                .to_owned();
-            ActivityFileTask {
-                index,
-                path,
-                size,
-                short_name,
+    let mut next_activity_cache = BTreeMap::new();
+    let mut tasks = Vec::new();
+    let mut tasks_paths = Vec::new(); // keep track of paths for cache update
+
+    for path in files {
+        let mtime = get_mtime_ms(&path);
+        let rel_path = path.strip_prefix(activity_dir)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+
+        if let Some(cached) = stats.activity_cache.get(&rel_path) {
+            if cached.mtime_ms == mtime {
+                stats.activity.files += 1;
+                stats.activity.total_events += cached.stats.event_lines;
+                stats.activity.parse_errors += cached.stats.parse_errors;
+                for (et, c) in &cached.stats.event_types {
+                    increment_counter(&mut stats.activity.by_event_type, et, *c);
+                }
+                next_activity_cache.insert(rel_path, cached.clone());
+                continue;
             }
-        })
-        .collect();
+        }
+        
+        let index = tasks.len();
+        let size = fs::metadata(&path).map(|m| m.len().max(1)).unwrap_or(1);
+        let short_name = path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown.json")
+            .to_owned();
+        tasks.push(ActivityFileTask {
+            index,
+            path: path.clone(),
+            size,
+            short_name,
+        });
+        tasks_paths.push((index, rel_path, mtime));
+    }
+
+    if tasks.is_empty() {
+        stats.activity_cache = next_activity_cache;
+        on_progress(1.0, "All activity logs up to date (cached)".to_owned());
+        return Ok(());
+    }
 
     stats.activity.files += tasks.len() as u64;
 
-    let total_files = tasks.len();
-    let file_sizes: Vec<u64> = tasks.iter().map(|task| task.size).collect();
-    let file_names: Vec<String> = tasks.iter().map(|task| task.short_name.clone()).collect();
+    let total_tasks = tasks.len();
+    let file_sizes: Vec<u64> = tasks.iter().map(|t| t.size).collect();
+    let file_names: Vec<String> = tasks.iter().map(|t| t.short_name.clone()).collect();
     let total_bytes: u64 = file_sizes.iter().sum::<u64>().max(1);
-    let mut file_bytes_read = vec![0_u64; total_files];
+    let mut file_bytes_read = vec![0_u64; total_tasks];
     let mut total_bytes_read = 0_u64;
 
     let worker_count = thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
-        .min(total_files)
+        .min(total_tasks)
         .max(1);
 
     let task_queue = Arc::new(Mutex::new(VecDeque::from(tasks)));
@@ -584,11 +674,7 @@ where
                     };
                     guard.pop_front()
                 };
-
-                let Some(task) = task else {
-                    break;
-                };
-
+                let Some(task) = task else { break; };
                 match process_activity_file(&task, &worker_tx) {
                     Ok(file_stats) => {
                         let _ = worker_tx.send(ActivityWorkerEvent::Finished {
@@ -598,7 +684,7 @@ where
                     }
                     Err(err) => {
                         let _ = worker_tx.send(ActivityWorkerEvent::Failed {
-                            file_index: task.index,
+                            _file_index: task.index,
                             error: format!("{}: {err}", task.path.display()),
                         });
                     }
@@ -611,88 +697,57 @@ where
     let mut finished_files = 0usize;
     let mut first_error: Option<anyhow::Error> = None;
 
-    while finished_files < total_files {
+    while finished_files < total_tasks {
         let event = match rx.recv() {
             Ok(event) => event,
             Err(_) => break,
         };
 
         match event {
-            ActivityWorkerEvent::Progress {
-                file_index,
-                bytes_read,
-            } => {
+            ActivityWorkerEvent::Progress { file_index, bytes_read } => {
                 let capped = bytes_read.min(file_sizes[file_index]);
                 if capped > file_bytes_read[file_index] {
-                    total_bytes_read =
-                        total_bytes_read.saturating_add(capped - file_bytes_read[file_index]);
+                    total_bytes_read = total_bytes_read.saturating_add(capped - file_bytes_read[file_index]);
                     file_bytes_read[file_index] = capped;
                 }
                 let fraction = (total_bytes_read as f32 / total_bytes as f32).clamp(0.0, 1.0);
-                let file_fraction =
-                    (file_bytes_read[file_index] as f32 / file_sizes[file_index] as f32) * 100.0;
-                on_progress(
-                    fraction,
-                    format!(
-                        "file {}/{}: {} ({file_fraction:.0}%)",
-                        file_index + 1,
-                        total_files,
-                        file_names[file_index]
-                    ),
-                );
+                on_progress(fraction, format!("file {}/{}: {}", file_index + 1, total_tasks, file_names[file_index]));
             }
-            ActivityWorkerEvent::Finished {
-                file_index,
-                stats: file_stats,
-            } => {
+            ActivityWorkerEvent::Finished { file_index, stats: file_stats } => {
                 if file_sizes[file_index] > file_bytes_read[file_index] {
-                    total_bytes_read = total_bytes_read
-                        .saturating_add(file_sizes[file_index] - file_bytes_read[file_index]);
+                    total_bytes_read = total_bytes_read.saturating_add(file_sizes[file_index] - file_bytes_read[file_index]);
                     file_bytes_read[file_index] = file_sizes[file_index];
                 }
 
                 stats.activity.total_events += file_stats.event_lines;
                 stats.activity.parse_errors += file_stats.parse_errors;
-                for (event_type, count) in file_stats.event_types {
-                    increment_counter(&mut stats.activity.by_event_type, event_type, count);
+                for (et, c) in &file_stats.event_types {
+                    increment_counter(&mut stats.activity.by_event_type, et, *c);
+                }
+
+                // Update cache
+                if let Some((_, rel_path, mtime)) = tasks_paths.iter().find(|(idx, _, _)| *idx == file_index) {
+                    next_activity_cache.insert(rel_path.clone(), ActivityFileCache {
+                        mtime_ms: *mtime,
+                        stats: file_stats,
+                    });
                 }
 
                 finished_files += 1;
                 let fraction = (total_bytes_read as f32 / total_bytes as f32).clamp(0.0, 1.0);
-                on_progress(
-                    fraction,
-                    format!(
-                        "file {}/{}: {} complete",
-                        file_index + 1,
-                        total_files,
-                        file_names[file_index]
-                    ),
-                );
+                on_progress(fraction, format!("file {}/{}: {} complete", file_index + 1, total_tasks, file_names[file_index]));
             }
-            ActivityWorkerEvent::Failed { file_index, error } => {
-                if file_sizes[file_index] > file_bytes_read[file_index] {
-                    total_bytes_read = total_bytes_read
-                        .saturating_add(file_sizes[file_index] - file_bytes_read[file_index]);
-                    file_bytes_read[file_index] = file_sizes[file_index];
-                }
+            ActivityWorkerEvent::Failed { _file_index: _, error } => {
                 finished_files += 1;
-                if first_error.is_none() {
-                    first_error = Some(anyhow!(error));
-                }
+                if first_error.is_none() { first_error = Some(anyhow!(error)); }
             }
         }
     }
 
-    for handle in worker_handles {
-        if handle.join().is_err() && first_error.is_none() {
-            first_error = Some(anyhow!("activity worker thread panicked"));
-        }
-    }
+    for h in worker_handles { let _ = h.join(); }
+    if let Some(err) = first_error { return Err(err); }
 
-    if let Some(err) = first_error {
-        return Err(err);
-    }
-
+    stats.activity_cache = next_activity_cache;
     Ok(())
 }
 
@@ -736,9 +791,9 @@ fn process_activity_file(
         match serde_json::from_slice::<ActivityEventLine>(line) {
             Ok(value) => {
                 if let Some(event_type) = value.event_type {
-                    increment_hash_counter(&mut stats.event_types, &event_type, 1);
+                    increment_counter(&mut stats.event_types, event_type, 1);
                 } else {
-                    increment_hash_counter(&mut stats.event_types, "unknown", 1);
+                    increment_counter(&mut stats.event_types, "unknown", 1);
                 }
             }
             Err(_) => {
@@ -781,16 +836,17 @@ fn analyze_activities(activities_dir: Option<&Path>, stats: &mut AnalysisData) -
                     .or(stats.activities.favorite_games);
             }
         } else if file_name == "preferences.json" {
-            if let Ok(value) = read_json_value(entry.path())
-                && let Value::Array(items) = value
-            {
-                stats.activities.preferences_entries += items.len() as u64;
+            if let Ok(value) = read_json_value(entry.path()) {
+                if let Value::Array(items) = value {
+                    stats.activities.preferences_entries += items.len() as u64;
+                }
             }
-        } else if file_name == "user_data.json"
-            && let Ok(value) = read_json_value(entry.path())
-            && let Value::Object(map) = value
-        {
-            stats.activities.user_data_apps += map.len() as u64;
+        } else if file_name == "user_data.json" {
+            if let Ok(value) = read_json_value(entry.path()) {
+                if let Value::Object(map) = value {
+                    stats.activities.user_data_apps += map.len() as u64;
+                }
+            }
         }
     }
     Ok(())
@@ -833,16 +889,8 @@ fn summarize_ticket(value: &Value, stats: &mut AnalysisData) {
             "timestamp",
         ],
     ) {
-        increment_counter(
-            &mut stats.support_tickets.by_month,
-            created_month.clone(),
-            1,
-        );
-        increment_counter(
-            &mut stats.support_tickets.activity_by_month,
-            created_month,
-            1,
-        );
+        increment_counter(&mut stats.support_tickets.by_month, created_month.clone(), 1);
+        increment_counter(&mut stats.support_tickets.activity_by_month, created_month, 1);
     }
 
     if let Some(Value::Array(comments)) = value.get("comments") {
@@ -888,45 +936,33 @@ fn summarize_ticket(value: &Value, stats: &mut AnalysisData) {
 
 // ── Message analysis ──────────────────────────────────────────────────────────
 
+struct ChannelTask {
+    id: String,
+    messages_path: PathBuf,
+    channel_path: PathBuf,
+    mtime_messages: u64,
+    mtime_channel: u64,
+}
+
+enum ChannelWorkerEvent {
+    Finished { id: String, stats: ChannelAnalysisCache },
+    Failed { id: String, error: String },
+}
+
 fn analyze_messages(
     messages_dir: Option<&Path>,
-    results_dir: &Path,
+    _results_dir: &Path,
     stats: &mut AnalysisData,
 ) -> Result<()> {
-    let contents_path = results_dir.join("contents.txt");
-    let mut writer = BufWriter::new(
-        File::create(&contents_path)
-            .with_context(|| format!("failed to create {}", contents_path.display()))?,
-    );
-
     let Some(messages_dir) = messages_dir else {
-        stats
-            .warnings
-            .push("Messages directory missing; message analysis skipped.".to_owned());
-        writer
-            .flush()
-            .with_context(|| "failed to flush contents writer".to_owned())?;
+        stats.warnings.push("Messages directory missing; message analysis skipped.".to_owned());
         return Ok(());
     };
 
-    let custom_emoji_re = Regex::new(r"<a?:[A-Za-z0-9_]+:\d+>")
-        .with_context(|| "failed to compile custom emoji regex".to_owned())?;
-    let mut char_freq: HashMap<char, u64> = HashMap::new();
-    let mut first_content = true;
-    let mut total_chars: u64 = 0;
-
-    let mut word_freq: HashMap<String, u64> = HashMap::new();
-    let mut hour_freq: BTreeMap<u32, u64> = BTreeMap::new();
-    let mut dow_freq: BTreeMap<u32, u64> = BTreeMap::new();
-    let mut month_freq: BTreeMap<u32, u64> = BTreeMap::new();
-    let mut channel_counts: Vec<(String, u64)> = Vec::new();
-
-    let mut first_ts: Option<String> = None;
-    let mut last_ts: Option<String> = None;
-
-    let hour_re = Regex::new(r"(?:T| )(\d{2}):(\d{2}):(\d{2})").unwrap();
-    let date_re = Regex::new(r"^(\d{4})-(\d{2})-(\d{2})").unwrap();
-    let word_re = Regex::new(r"(?i)\b[a-z]{3,15}\b").unwrap();
+    let custom_emoji_re = Regex::new(r"<a?:[A-Za-z0-9_]+:\d+>")?;
+    let hour_re = Regex::new(r"(?:T| )(\d{2}):(\d{2}):(\d{2})")?;
+    let date_re = Regex::new(r"^(\d{4})-(\d{2})-(\d{2})")?;
+    let word_re = Regex::new(r"(?i)\b[a-z]{3,15}\b")?;
 
     let mut channel_dirs: Vec<PathBuf> = fs::read_dir(messages_dir)?
         .filter_map(|entry| entry.ok())
@@ -935,137 +971,221 @@ fn analyze_messages(
         .collect();
     channel_dirs.sort();
 
+    let mut new_channels_cache = BTreeMap::new();
+    let mut tasks = Vec::new();
+    let mut total_word_freq: HashMap<String, u64> = HashMap::new();
+    let mut total_char_freq: HashMap<char, u64> = HashMap::new();
+    let mut channel_counts: Vec<(String, u64)> = Vec::new();
+
     for channel_dir in channel_dirs {
+        let channel_id = channel_dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_owned();
+
         let messages_path = channel_dir.join("messages.json");
         if !messages_path.is_file() {
             continue;
         }
-        stats.messages.channels += 1;
 
         let channel_path = channel_dir.join("channel.json");
-        let mut channel_title_str = channel_dir
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        if channel_path.is_file()
-            && let Ok(channel_value) = read_json_value(&channel_path)
-        {
-            if let Some(channel_type) = channel_value.get("type").and_then(value_to_plain_string) {
-                increment_counter(&mut stats.messages.by_channel_type, channel_type, 1);
-            }
-            channel_title_str = channel_title(Some(&channel_value), &channel_title_str);
-        }
+        let mtime_msg = get_mtime_ms(&messages_path);
+        let mtime_ch = get_mtime_ms(&channel_path);
 
-        let records = read_records_json_or_ndjson(&messages_path)?;
-        let mut ch_msgs = 0u64;
-        for record in records {
-            stats.messages.total += 1;
-            ch_msgs += 1;
-            let content = extract_message_content(&record);
-            let attachments = extract_attachment_urls(&record);
+        if let Some(cached) = stats.channels_cache.get(&channel_id) {
+            if cached.mtime_messages == mtime_msg && cached.mtime_channel == mtime_ch {
+                // Merge into global stats immediately
+                stats.messages.channels += 1;
+                stats.messages.total += cached.message_count;
+                stats.messages.with_content += cached.messages_with_content;
+                stats.messages.with_attachments += cached.attachment_count;
+                stats.messages.attachment_links.extend(cached.attachment_links.clone());
+                increment_counter(&mut stats.messages.by_channel_type, &cached.channel_type, 1);
+                stats.messages.temporal.merge(&cached.temporal);
+                stats.messages.content.merge(&cached.content);
 
-            // ── Timestamp ──
-            if let Some(ts) = pick_str(&record, &["Timestamp", "timestamp", "timestamp_ms", "date"])
-            {
-                // hour-of-day
-                if let Some(caps) = hour_re.captures(ts)
-                    && let Ok(hr) = caps[1].parse::<u32>()
-                {
-                    *hour_freq.entry(hr).or_insert(0) += 1;
+                for (w, c) in &cached.word_frequency {
+                    *total_word_freq.entry(w.clone()).or_insert(0) += c;
                 }
-                // date components
-                if let Some(caps) = date_re.captures(ts) {
-                    let month: u32 = caps[2].parse().unwrap_or(0);
-                    let day: u32 = caps[3].parse().unwrap_or(0);
-                    let year: u32 = caps[1].parse().unwrap_or(0);
-                    if (1..=12).contains(&month) {
-                        *month_freq.entry(month).or_insert(0) += 1;
-                    }
-                    // Compute day-of-week using Tomohiko Sakamoto algorithm
-                    if year >= 1 && month >= 1 && day >= 1 {
-                        let dow = day_of_week(year, month, day);
-                        *dow_freq.entry(dow).or_insert(0) += 1;
-                    }
-                    // Track earliest / latest date
-                    let date_str = format!("{:04}-{:02}-{:02}", year, month, day);
-                    if first_ts.as_deref().is_none_or(|f| date_str.as_str() < f) {
-                        first_ts = Some(date_str.clone());
-                    }
-                    if last_ts.as_deref().is_none_or(|l| date_str.as_str() > l) {
-                        last_ts = Some(date_str);
-                    }
-                }
-            }
-
-            // ── Content ──
-            if !content.is_empty() {
-                stats.messages.with_content += 1;
-                let char_count = content.chars().count() as u64;
-                total_chars += char_count;
-
-                stats.messages.content.linebreaks += content.matches('\n').count() as u64;
-                stats.messages.content.emoji_custom +=
-                    custom_emoji_re.find_iter(&content).count() as u64;
-
-                for grapheme in content.graphemes(true) {
-                    if emojis::get(grapheme).is_some() {
-                        stats.messages.content.emoji_unicode += 1;
+                for (ch, c) in &cached.content.character_frequency {
+                    if let Some(first_char) = ch.chars().next() {
+                        *total_char_freq.entry(first_char).or_insert(0) += c;
                     }
                 }
 
-                for ch in content.chars() {
-                    *char_freq.entry(ch).or_insert(0) += 1;
-                }
-
-                for mat in word_re.find_iter(&content.to_ascii_lowercase()) {
-                    let w = mat.as_str();
-                    if !is_stop_word(w) {
-                        *word_freq.entry(w.to_owned()).or_insert(0) += 1;
-                    }
-                }
-
-                if !first_content {
-                    writeln!(writer)?;
-                }
-                first_content = false;
-                write!(writer, "{content}")?;
-            }
-
-            // ── Attachments ──
-            if !attachments.is_empty() {
-                stats.messages.with_attachments += attachments.len() as u64;
-                for url in attachments {
-                    if url.starts_with("https://cdn.discordapp.com/attachments/") {
-                        stats.messages.attachment_links.push(url);
-                    }
-                }
+                channel_counts.push((cached.channel_title.clone(), cached.message_count));
+                new_channels_cache.insert(channel_id, cached.clone());
+                continue;
             }
         }
-        channel_counts.push((channel_title_str, ch_msgs));
+
+        tasks.push(ChannelTask {
+            id: channel_id,
+            messages_path,
+            channel_path,
+            mtime_messages: mtime_msg,
+            mtime_channel: mtime_ch,
+        });
     }
 
-    writer
-        .flush()
-        .with_context(|| "failed to flush contents writer".to_owned())?;
+    if !tasks.is_empty() {
+        let worker_count = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(tasks.len())
+            .max(1);
 
-    // ── Finalise content stats ──
-    stats.messages.content.distinct_characters = char_freq.len();
-    stats.messages.content.total_chars = total_chars;
+        let task_queue = Arc::new(Mutex::new(VecDeque::from(tasks)));
+        let (tx, rx) = mpsc::channel::<ChannelWorkerEvent>();
+
+        for _ in 0..worker_count {
+            let queue = Arc::clone(&task_queue);
+            let worker_tx = tx.clone();
+            let c_re = custom_emoji_re.clone();
+            let h_re = hour_re.clone();
+            let d_re = date_re.clone();
+            let w_re = word_re.clone();
+
+            thread::spawn(move || {
+                loop {
+                    let task = {
+                        let mut guard = match queue.lock() {
+                            Ok(g) => g,
+                            Err(_) => return,
+                        };
+                        guard.pop_front()
+                    };
+                    let Some(task) = task else { break; };
+
+                    let mut ch_stats = ChannelAnalysisCache {
+                        mtime_messages: task.mtime_messages,
+                        mtime_channel: task.mtime_channel,
+                        ..Default::default()
+                    };
+
+                    if task.channel_path.is_file() {
+                        if let Ok(val) = read_json_value(&task.channel_path) {
+                            ch_stats.channel_type = val.get("type")
+                                .and_then(value_to_plain_string)
+                                .unwrap_or_else(|| "unknown".to_owned());
+                            ch_stats.channel_title = channel_title(Some(&val), &task.id);
+                        }
+                    } else {
+                        ch_stats.channel_title = task.id.clone();
+                    }
+
+                    match read_records_json_or_ndjson(&task.messages_path) {
+                        Ok(records) => {
+                            for record in records {
+                                ch_stats.message_count += 1;
+                                let content = extract_message_content(&record);
+                                let attachments = extract_attachment_urls(&record);
+
+                                if let Some(ts) = pick_str(&record, &["Timestamp", "timestamp", "timestamp_ms", "date"]) {
+                                    if let Some(caps) = h_re.captures(ts) {
+                                        if let Ok(hr) = caps[1].parse::<u32>() {
+                                            *ch_stats.temporal.by_hour.entry(hr).or_insert(0) += 1;
+                                        }
+                                    }
+                                    if let Some(caps) = d_re.captures(ts) {
+                                        let y: u32 = caps[1].parse().unwrap_or(0);
+                                        let m: u32 = caps[2].parse().unwrap_or(0);
+                                        let d: u32 = caps[3].parse().unwrap_or(0);
+                                        if (1..=12).contains(&m) {
+                                            *ch_stats.temporal.by_month.entry(m).or_insert(0) += 1;
+                                        }
+                                        if y >= 1 && m >= 1 && d >= 1 {
+                                            let dow = day_of_week(y, m, d);
+                                            *ch_stats.temporal.by_day_of_week.entry(dow).or_insert(0) += 1;
+                                        }
+                                        let ds = format!("{y:04}-{m:02}-{d:02}");
+                                        if ch_stats.temporal.first_message_date.as_deref().is_none_or(|f| ds < f.to_owned()) {
+                                            ch_stats.temporal.first_message_date = Some(ds.clone());
+                                        }
+                                        if ch_stats.temporal.last_message_date.as_deref().is_none_or(|l| ds > l.to_owned()) {
+                                            ch_stats.temporal.last_message_date = Some(ds);
+                                        }
+                                    }
+                                }
+
+                                if !content.is_empty() {
+                                    ch_stats.messages_with_content += 1;
+                                    ch_stats.content.total_chars += content.chars().count() as u64;
+                                    ch_stats.content.linebreaks += content.matches('\n').count() as u64;
+                                    ch_stats.content.emoji_custom += c_re.find_iter(&content).count() as u64;
+                                    for g in content.graphemes(true) {
+                                        if emojis::get(g).is_some() { ch_stats.content.emoji_unicode += 1; }
+                                    }
+                                    for ch in content.chars() {
+                                        *ch_stats.content.character_frequency.entry(ch.to_string()).or_insert(0) += 1;
+                                    }
+                                    for mat in w_re.find_iter(&content.to_ascii_lowercase()) {
+                                        let w = mat.as_str();
+                                        if !is_stop_word(w) {
+                                            *ch_stats.word_frequency.entry(w.to_owned()).or_insert(0) += 1;
+                                        }
+                                    }
+                                }
+
+                                if !attachments.is_empty() {
+                                    ch_stats.attachment_count += attachments.len() as u64;
+                                    for url in attachments {
+                                        if url.starts_with("https://cdn.discordapp.com/attachments/") {
+                                            ch_stats.attachment_links.push(url);
+                                        }
+                                    }
+                                }
+                            }
+                            let _ = worker_tx.send(ChannelWorkerEvent::Finished { id: task.id, stats: ch_stats });
+                        }
+                        Err(e) => {
+                            let _ = worker_tx.send(ChannelWorkerEvent::Failed { id: task.id, error: e.to_string() });
+                        }
+                    }
+                }
+            });
+        }
+        drop(tx);
+
+        while let Ok(event) = rx.recv() {
+            match event {
+                ChannelWorkerEvent::Finished { id, stats: cache_entry } => {
+                    stats.messages.channels += 1;
+                    stats.messages.total += cache_entry.message_count;
+                    stats.messages.with_content += cache_entry.messages_with_content;
+                    stats.messages.with_attachments += cache_entry.attachment_count;
+                    stats.messages.attachment_links.extend(cache_entry.attachment_links.clone());
+                    increment_counter(&mut stats.messages.by_channel_type, &cache_entry.channel_type, 1);
+                    stats.messages.temporal.merge(&cache_entry.temporal);
+                    stats.messages.content.merge(&cache_entry.content);
+
+                    for (w, c) in &cache_entry.word_frequency {
+                        *total_word_freq.entry(w.clone()).or_insert(0) += c;
+                    }
+                    for (ch, c) in &cache_entry.content.character_frequency {
+                        if let Some(first_char) = ch.chars().next() {
+                            *total_char_freq.entry(first_char).or_insert(0) += c;
+                        }
+                    }
+
+                    channel_counts.push((cache_entry.channel_title.clone(), cache_entry.message_count));
+                    new_channels_cache.insert(id, cache_entry);
+                }
+                ChannelWorkerEvent::Failed { id, error } => {
+                    stats.warnings.push(format!("Channel {id} failed: {error}"));
+                }
+            }
+        }
+    }
+    stats.channels_cache = new_channels_cache;
+
+    // Finalize global aggregate stats
+    stats.messages.content.distinct_characters = total_char_freq.len();
     stats.messages.content.avg_length_chars = if stats.messages.with_content > 0 {
-        (total_chars as f64) / (stats.messages.with_content as f64)
-    } else {
-        0.0
-    };
+        (stats.messages.content.total_chars as f64) / (stats.messages.with_content as f64)
+    } else { 0.0 };
 
-    let mut sorted: Vec<(char, u64)> = char_freq.into_iter().collect();
-    sorted.sort_by(|a, b| a.0.cmp(&b.0));
-    stats.messages.content.character_frequency = sorted
-        .into_iter()
-        .map(|(ch, count)| (ch.to_string(), count))
-        .collect();
-
-    let mut words_vec: Vec<_> = word_freq.into_iter().collect();
+    let mut words_vec: Vec<_> = total_word_freq.into_iter().collect();
     words_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     words_vec.truncate(100);
     stats.messages.content.top_words = words_vec;
@@ -1073,12 +1193,6 @@ fn analyze_messages(
     channel_counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     channel_counts.truncate(25);
     stats.messages.top_channels = channel_counts;
-
-    stats.messages.temporal.by_hour = hour_freq;
-    stats.messages.temporal.by_day_of_week = dow_freq;
-    stats.messages.temporal.by_month = month_freq;
-    stats.messages.temporal.first_message_date = first_ts;
-    stats.messages.temporal.last_message_date = last_ts;
 
     Ok(())
 }
@@ -1243,13 +1357,6 @@ fn increment_counter(map: &mut BTreeMap<String, u64>, key: impl Into<String>, by
     *entry += by;
 }
 
-fn increment_hash_counter(map: &mut HashMap<String, u64>, key: &str, by: u64) {
-    if let Some(value) = map.get_mut(key) {
-        *value += by;
-    } else {
-        map.insert(key.to_owned(), by);
-    }
-}
 
 fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
     let start = bytes
@@ -1262,4 +1369,12 @@ fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
         .map(|idx| idx + 1)
         .unwrap_or(start);
     &bytes[start..end]
+}
+fn get_mtime_ms(path: &Path) -> u64 {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }

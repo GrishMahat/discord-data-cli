@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::config::SourceAliases;
 use crate::data::utils::{
-    channel_title, count_records, pick_str, read_json_value, read_records_json_or_ndjson,
+    channel_title, count_records, pick_str, read_json_value, read_records_tail,
     resolve_optional_subdir, value_to_plain_string,
 };
 
@@ -112,15 +112,10 @@ pub(crate) fn load_message_preview(
     channel: &MessageChannel,
     preview_count: usize,
 ) -> Result<Vec<String>> {
-    let messages = read_records_json_or_ndjson(&channel.messages_path)?;
-    if messages.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let start = messages.len().saturating_sub(preview_count);
+    let records = read_records_tail(&channel.messages_path, preview_count)?;
     let mut lines = Vec::new();
 
-    for record in &messages[start..] {
+    for record in &records {
         let timestamp = pick_str(record, &["Timestamp", "timestamp", "timestamp_ms", "date"])
             .unwrap_or("unknown");
         let content = pick_str(

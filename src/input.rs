@@ -10,11 +10,11 @@ use crate::{
     app::{
         ActivityFilterField, AppState, ChannelFilter, HOME_MENU_ITEMS, Screen, SetupStep,
         apply_settings_selection, execute_home_selection, filtered_activity_events,
-        filtered_channels, home_item_disabled_reason, is_printable_input, open_activity,
-        open_channel_filter, open_selected_activity_event, open_selected_channel,
-        open_selected_support_ticket, open_support_activity, refresh_support_activity_data,
-        screen_disabled_reason, setup_prev_step, setup_submit_step, switch_filter,
-        try_load_existing_data,
+        filtered_channels, filtered_gallery_files, home_item_disabled_reason, is_printable_input,
+        open_activity, open_channel_filter, open_gallery, open_selected_activity_event,
+        open_selected_channel, open_selected_support_ticket, open_support_activity,
+        refresh_support_activity_data, screen_disabled_reason, setup_prev_step, setup_submit_step,
+        switch_filter, switch_gallery_filter, try_load_existing_data,
     },
     data::SupportTicketView,
 };
@@ -67,6 +67,7 @@ pub(crate) fn handle_mouse(app: &mut AppState, mouse: MouseEvent) -> Result<()> 
         Screen::ChannelList => handle_channel_mouse(app, mouse, chunks[2])?,
         Screen::MessageView => handle_message_mouse(app, mouse, chunks[2]),
         Screen::Settings => handle_settings_mouse(app, mouse, chunks[2]),
+        Screen::Gallery => handle_gallery_mouse(app, mouse, chunks[2]),
         _ => {}
     }
 
@@ -84,6 +85,7 @@ fn tab_at_position(area: Rect, x: u16, y: u16) -> Option<Screen> {
         (Screen::SupportActivity, "Support"),
         (Screen::Activity, "Activity"),
         (Screen::ChannelList, "Channels"),
+        (Screen::Gallery, "Gallery"),
         (Screen::Settings, "Settings"),
     ];
 
@@ -119,6 +121,9 @@ fn navigate_to_tab(app: &mut AppState, target: Screen) -> Result<()> {
         }
         Screen::ChannelList => {
             open_channel_filter(app, ChannelFilter::All)?;
+        }
+        Screen::Gallery => {
+            open_gallery(app)?;
         }
         Screen::Settings => app.screen = Screen::Settings,
         _ => {}
@@ -437,6 +442,7 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
         Screen::ChannelList => handle_channel_key(app, key)?,
         Screen::MessageView => handle_message_key(app, key),
         Screen::Settings => handle_settings_key(app, key),
+        Screen::Gallery => handle_gallery_key(app, key),
         _ => {}
     }
 
@@ -450,6 +456,7 @@ fn cycle_tab_screen(app: &AppState, current: Screen, reverse: bool) -> Screen {
         Screen::SupportActivity,
         Screen::Activity,
         Screen::ChannelList,
+        Screen::Gallery,
         Screen::Settings,
     ];
     let current = tab_group_screen(current);
@@ -868,6 +875,102 @@ fn handle_settings_key(app: &mut AppState, key: KeyEvent) {
         KeyCode::Enter => apply_settings_selection(app),
         KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
             app.screen = Screen::Home
+        }
+        _ => {}
+    }
+}
+fn handle_gallery_key(app: &mut AppState, key: KeyEvent) {
+    let files = filtered_gallery_files(app);
+    let count = files.len();
+
+    match key.code {
+        KeyCode::Up
+        | KeyCode::Char('w')
+        | KeyCode::Char('W')
+        | KeyCode::Char('k')
+        | KeyCode::Char('K') => {
+            app.gallery.cursor = app.gallery.cursor.saturating_sub(1);
+        }
+        KeyCode::Down
+        | KeyCode::Char('s')
+        | KeyCode::Char('S')
+        | KeyCode::Char('j')
+        | KeyCode::Char('J') => {
+            if app.gallery.cursor + 1 < count {
+                app.gallery.cursor += 1;
+            }
+        }
+        KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U') => {
+            app.gallery.cursor = app.gallery.cursor.saturating_sub(20);
+        }
+        KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D') => {
+            app.gallery.cursor = (app.gallery.cursor + 20).min(count.saturating_sub(1));
+        }
+        KeyCode::Char('1') => switch_gallery_filter(app, None),
+        KeyCode::Char('2') => switch_gallery_filter(app, Some("imgs".to_owned())),
+        KeyCode::Char('3') => switch_gallery_filter(app, Some("vids".to_owned())),
+        KeyCode::Char('4') => switch_gallery_filter(app, Some("audios".to_owned())),
+        KeyCode::Char('5') => switch_gallery_filter(app, Some("docs".to_owned())),
+        KeyCode::Char('6') => switch_gallery_filter(app, Some("txts".to_owned())),
+        KeyCode::Char('7') => switch_gallery_filter(app, Some("codes".to_owned())),
+        KeyCode::Char('8') => switch_gallery_filter(app, Some("zips".to_owned())),
+        KeyCode::Char('9') => switch_gallery_filter(app, Some("unknowns".to_owned())),
+        KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
+            app.screen = Screen::Home;
+        }
+        _ => {}
+    }
+}
+fn handle_gallery_mouse(app: &mut AppState, mouse: MouseEvent, area: Rect) {
+    let files = filtered_gallery_files(app);
+    let count = files.len();
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(5)])
+        .split(area);
+
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            if rect_contains(chunks[0], mouse.column, mouse.row) && chunks[0].width > 0 {
+                let rel_x = mouse.column.saturating_sub(chunks[0].x) as usize;
+                // Roughly 9 categories, spaced
+                let idx = (rel_x * 9) / chunks[0].width as usize;
+                let categories = [
+                    None,
+                    Some("imgs"),
+                    Some("vids"),
+                    Some("audios"),
+                    Some("docs"),
+                    Some("txts"),
+                    Some("codes"),
+                    Some("zips"),
+                    Some("unknowns"),
+                ];
+                if let Some(opt) = categories.get(idx) {
+                    switch_gallery_filter(app, opt.map(|s| s.to_owned()));
+                }
+                return;
+            }
+
+            if count > 0 && rect_contains(chunks[1], mouse.column, mouse.row) && chunks[1].height > 2 {
+                let visible = chunks[1].height.saturating_sub(2) as usize;
+                let page_size = visible.max(1);
+                let start = app.gallery.cursor.saturating_sub(page_size / 2).min(count.saturating_sub(page_size));
+                let end = (start + page_size).min(count);
+                let row = mouse.row.saturating_sub(chunks[1].y + 1) as usize;
+                if row < end.saturating_sub(start) {
+                    app.gallery.cursor = start + row;
+                }
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            app.gallery.cursor = app.gallery.cursor.saturating_sub(1);
+        }
+        MouseEventKind::ScrollDown => {
+            if app.gallery.cursor + 1 < count {
+                app.gallery.cursor += 1;
+            }
         }
         _ => {}
     }
