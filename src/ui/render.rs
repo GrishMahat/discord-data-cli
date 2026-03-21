@@ -2065,7 +2065,7 @@ fn draw_gallery(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     }
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(format!(" Gallery: {} files discovered ", files.len()))
+        .block(Block::default().borders(Borders::ALL).title(format!(" Gallery: {} files discovered | [Enter] Open ", files.len()))
         .border_style(Style::default().fg(Color::Cyan)))
         .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
         .highlight_symbol("");

@@ -925,6 +925,16 @@ fn handle_gallery_key(app: &mut AppState, key: KeyEvent) {
         KeyCode::Char('7') => switch_gallery_filter(app, Some("codes".to_owned())),
         KeyCode::Char('8') => switch_gallery_filter(app, Some("zips".to_owned())),
         KeyCode::Char('9') => switch_gallery_filter(app, Some("unknowns".to_owned())),
+        KeyCode::Enter => {
+            if count > 0 && app.gallery.cursor < count {
+                let file = &files[app.gallery.cursor];
+                if let Err(e) = open::that(&file._path) {
+                    app.error = Some(format!("Failed to open file: {}", e));
+                } else {
+                    app.status = format!("Opened: {}", file.name);
+                }
+            }
+        }
         KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
             app.screen = Screen::Home;
         }

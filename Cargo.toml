@@ -17,6 +17,7 @@ walkdir = "2.5"
 toml = "1.0.3"
 ureq = "3.2.0"
 sha2 = "0.10"
+open = "5.3.3"
 
 [[bin]]
 name = "discord-analyzer"
