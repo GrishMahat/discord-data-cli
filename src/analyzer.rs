@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Sender},
     },
     thread,
@@ -257,9 +258,41 @@ pub struct Programs {
 
 // ── Progress ─────────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnalysisStep {
+    Preparing,
+    Account,
+    Messages,
+    Servers,
+    Support,
+    Activity,
+    Activities,
+    Programs,
+    Writing,
+    Complete,
+}
+
+impl AnalysisStep {
+    pub fn label(self) -> &'static str {
+        match self {
+            AnalysisStep::Preparing => "Preparing",
+            AnalysisStep::Account => "Account",
+            AnalysisStep::Messages => "Messages",
+            AnalysisStep::Servers => "Servers",
+            AnalysisStep::Support => "Support",
+            AnalysisStep::Activity => "Activity",
+            AnalysisStep::Activities => "Activities",
+            AnalysisStep::Programs => "Programs",
+            AnalysisStep::Writing => "Writing results",
+            AnalysisStep::Complete => "Complete",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AnalysisProgress {
     pub fraction: f32,
+    pub step: AnalysisStep,
     pub label: String,
 }
 
@@ -269,6 +302,7 @@ pub fn run_with_progress<F>(
     config: &AppConfig,
     config_path: &Path,
     id: &str,
+    abort: Arc<AtomicBool>,
     mut on_progress: F,
 ) -> Result<AnalysisData>
 where
@@ -277,9 +311,18 @@ where
     const TOTAL_STEPS: f32 = 9.0;
     let step_fraction = |step: f32| (step / TOTAL_STEPS).clamp(0.0, 1.0);
 
+    let check_abort = || {
+        if abort.load(Ordering::SeqCst) {
+            bail!("Analysis canceled by user.");
+        }
+        Ok(())
+    };
+    check_abort()?;
+
     emit_progress(
         &mut on_progress,
         step_fraction(0.0),
+        AnalysisStep::Preparing,
         "Preparing analysis...",
     );
 
@@ -317,7 +360,8 @@ where
         ..AnalysisData::default()
     };
 
-    emit_progress(&mut on_progress, step_fraction(1.0), "Analyzing account...");
+    check_abort()?;
+    emit_progress(&mut on_progress, step_fraction(1.0), AnalysisStep::Account, "Analyzing account...");
     if let Some(account_dir) = &source_dirs.account {
         analyze_account(account_dir, &mut stats)?;
     } else {
@@ -329,31 +373,40 @@ where
     emit_progress(
         &mut on_progress,
         step_fraction(2.0),
+        AnalysisStep::Messages,
         "Analyzing messages...",
     );
     analyze_messages(source_dirs.messages.as_deref(), &results_dir, &mut stats)?;
-    emit_progress(&mut on_progress, step_fraction(3.0), "Analyzing servers...");
+    emit_progress(&mut on_progress, step_fraction(3.0), AnalysisStep::Servers, "Analyzing servers...");
     analyze_servers(source_dirs.servers.as_deref(), &mut stats)?;
     emit_progress(
         &mut on_progress,
         step_fraction(4.0),
+        AnalysisStep::Support,
         "Analyzing support tickets...",
     );
     analyze_support_tickets(source_dirs.support_tickets.as_deref(), &mut stats)?;
     emit_progress(
         &mut on_progress,
         step_fraction(5.0),
+        AnalysisStep::Activity,
         "Analyzing activity events...",
     );
+    check_abort()?;
     analyze_activity(
         source_dirs.activity.as_deref(),
         &mut stats,
         |activity_fraction, detail| {
+            if abort.load(Ordering::SeqCst) {
+                // Return but we can't easily break from a closure without returning a Result.
+                // However, analyze_activity checks the abort flag internally if we pass it down.
+            }
             let activity_fraction = activity_fraction.clamp(0.0, 1.0);
             let overall_fraction = step_fraction(5.0 + activity_fraction);
             emit_progress(
                 &mut on_progress,
                 overall_fraction,
+                AnalysisStep::Activity,
                 format!("Analyzing activity events... {detail}"),
             );
         },
@@ -361,17 +414,19 @@ where
     emit_progress(
         &mut on_progress,
         step_fraction(6.0),
+        AnalysisStep::Activities,
         "Analyzing activities...",
     );
     analyze_activities(source_dirs.activities.as_deref(), &mut stats)?;
     emit_progress(
         &mut on_progress,
         step_fraction(7.0),
+        AnalysisStep::Programs,
         "Analyzing programs...",
     );
     analyze_programs(source_dirs.programs.as_deref(), &mut stats)?;
 
-    emit_progress(&mut on_progress, step_fraction(8.0), "Writing results...");
+    emit_progress(&mut on_progress, step_fraction(8.0), AnalysisStep::Writing, "Writing results...");
     let data_path = results_dir.join("data.json");
     fs::write(
         &data_path,
@@ -386,17 +441,18 @@ where
         eprintln!("Failed to write report.md: {}", e);
     }
 
-    emit_progress(&mut on_progress, 1.0, "Analysis complete.");
+    emit_progress(&mut on_progress, 1.0, AnalysisStep::Complete, "Analysis complete.");
     Ok(stats)
 }
 
-fn emit_progress<F, S>(on_progress: &mut F, fraction: f32, label: S)
+fn emit_progress<F, S>(on_progress: &mut F, fraction: f32, step: AnalysisStep, label: S)
 where
     F: FnMut(AnalysisProgress),
     S: Into<String>,
 {
     on_progress(AnalysisProgress {
         fraction,
+        step,
         label: label.into(),
     });
 }

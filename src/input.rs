@@ -401,8 +401,14 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     }
 
     if app.screen == Screen::Analyzing || app.screen == Screen::Downloading {
-        // Prevent most key events while locked in processing screens
-        // But allow Ctrl+C (already handled above)
+        match key.code {
+            KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.screen = Screen::Home;
+            }
+            _ => {
+                // Ignore other keys while processing
+            }
+        }
         return Ok(());
     }
 

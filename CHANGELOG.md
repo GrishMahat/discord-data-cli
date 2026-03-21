@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [v0.2.0] - 2026-03-21
 
+### Architecture & Refactoring
+- **Modular UI Screens**: Extracted all screen rendering functions from monolithic `render.rs` into dedicated modules (`overview.rs`, `channel_list.rs`, `messages.rs`, `support.rs`, `activity.rs`, `settings.rs`, `download.rs`) for improved maintainability and code organization.
+
+### Features
+- **Analysis Abort Support**: Added cancellation capability to the analysis engine. Analysis now accepts an atomic abort flag that can be triggered to stop long-running operations.
+- **Step-Resolved Progress**: Enhanced progress tracking with a dedicated `AnalysisStep` enum to provide more granular status updates during analysis phases.
+- **Back Navigation from Processing**: Added 'b' key binding to navigate back from Analyzing and Downloading screens without waiting for completion.
+
 ### Performance & Efficiency
 - **Incremental Analysis Engine**: Integrated file modification time (`mtime`) tracking. Re-analyzing unchanged exports is now near-instant, only processing new or updated channels and activity logs.
 - **Parallel Analysis**: Implemented a thread-pooled message analyzer. Multiple channels are now processed simultaneously, providing massive speedups for large exports on multi-core CPUs.

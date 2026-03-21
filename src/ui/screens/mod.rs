@@ -1,3 +1,10 @@
 pub(crate) mod gallery;
 pub(crate) mod setup;
 pub(crate) mod home;
+pub(crate) mod overview;
+pub(crate) mod channel_list;
+pub(crate) mod messages;
+pub(crate) mod support;
+pub(crate) mod activity;
+pub(crate) mod download;
+pub(crate) mod settings;

@@ -2,7 +2,11 @@ use std::{
     collections::BTreeMap,
     env, fs,
     path::PathBuf,
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, TryRecvError},
+    },
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -212,7 +216,9 @@ pub(crate) struct AppState {
     pub(crate) status: String,
     pub(crate) error: Option<String>,
     pub(crate) analysis_progress: f32,
+    pub(crate) analysis_step: analyzer::AnalysisStep,
     pub(crate) analysis_running: bool,
+    pub(crate) analysis_abort: Arc<AtomicBool>,
     pub(crate) analysis_started_at: Option<Instant>,
     analysis_rx: Option<Receiver<AnalysisEvent>>,
     pub(crate) download_progress: f32,
@@ -292,7 +298,9 @@ impl AppState {
             status: "Ready".to_owned(),
             error: None,
             analysis_progress: 0.0,
+            analysis_step: analyzer::AnalysisStep::Preparing,
             analysis_running: false,
+            analysis_abort: Arc::new(AtomicBool::new(false)),
             analysis_started_at: None,
             analysis_rx: None,
             download_progress: 0.0,
@@ -955,8 +963,11 @@ pub(crate) fn start_analysis(app: &mut AppState) {
     let config_path = app.config_path.clone();
     let id = app.id.clone();
 
+    app.analysis_abort = Arc::new(AtomicBool::new(false));
+    let abort = Arc::clone(&app.analysis_abort);
+
     thread::spawn(move || {
-        let result = analyzer::run_with_progress(&config, &config_path, &id, |progress| {
+        let result = analyzer::run_with_progress(&config, &config_path, &id, abort, |progress| {
             let _ = tx.send(AnalysisEvent::Progress(progress));
         })
         .map_err(|err| err.to_string());
@@ -975,6 +986,7 @@ pub(crate) fn poll_analysis(app: &mut AppState) {
             match rx.try_recv() {
                 Ok(AnalysisEvent::Progress(progress)) => {
                     app.analysis_progress = progress.fraction.clamp(0.0, 1.0);
+                    app.analysis_step = progress.step;
                     app.status = progress.label;
                 }
                 Ok(AnalysisEvent::Finished(result)) => match *result {
@@ -1023,9 +1035,6 @@ pub(crate) fn poll_analysis(app: &mut AppState) {
                 }
             }
         }
-    }
-
-    if finished || disconnected {
         app.analysis_rx = None;
     }
 

@@ -9,21 +9,25 @@ use ratatui::{
 
 use crate::{
     app::{AppState, SetupStep, format_duration},
+    analyzer::AnalysisStep,
     ui::components::{centered_rect, fit_input_for_box},
 };
 
 pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
     let area = frame.area();
+    // Dim the background
     frame.render_widget(
         Block::default().style(Style::default().bg(Color::Black)),
         area,
     );
-    let card = centered_rect(64, 50, area);
+    
+    // Modal card - slightly larger to fit the checklist
+    let card = centered_rect(80, 80, area);
     frame.render_widget(Clear, card);
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("  Analyzing Discord Export  ")
+        .title("  Analysis Engine  ")
         .border_style(
             Style::default()
                 .fg(Color::Cyan)
@@ -35,40 +39,27 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(5),
-            Constraint::Length(3),
-            Constraint::Length(2),
+            Constraint::Length(3), // Title
+            Constraint::Length(3), // Main Gauge
+            Constraint::Length(2), // Current Step Label
+            Constraint::Min(2),    // Status detail
+            Constraint::Length(10), // Checklist
+            Constraint::Length(3),  // Buttons
         ])
         .split(inner);
 
-    let spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let spinner = spinner_frames[((app.animation_tick / 2) % spinner_frames.len() as u64) as usize];
-    let elapsed = app
-        .analysis_started_at
-        .map(|s| s.elapsed())
-        .unwrap_or_default();
-
-    let text_lines = vec![
-        Line::from(""),
-        Line::styled(
-            format!(" {spinner} Analyzing your Discord data..."),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Line::from(""),
-        Line::styled(
-            format!("    {}", app.status),
-            Style::default().fg(Color::Gray),
-        ),
-    ];
+    // 1. Title
     frame.render_widget(
-        Paragraph::new(text_lines).wrap(Wrap { trim: true }),
+        Paragraph::new(Line::styled(
+            "Analyzing your Discord data...",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Center),
         sections[0],
     );
 
+    // 2. Main Gauge
     let pct = app.analysis_progress * 100.0;
-    let label = format!("  {pct:>5.1}%  elapsed: {}", format_duration(elapsed));
     let gauge = Gauge::default()
         .gauge_style(
             Style::default()
@@ -77,82 +68,112 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
                 .add_modifier(Modifier::BOLD),
         )
         .ratio(app.analysis_progress as f64)
-        .label(label);
+        .label(format!("{pct:>5.1}%"));
     frame.render_widget(gauge, sections[1]);
 
-    let eta_line = if app.analysis_progress > 0.02 {
-        let rate = app.analysis_progress as f64 / elapsed.as_secs_f64().max(0.001);
-        let remaining = ((1.0 - app.analysis_progress as f64) / rate) as u64;
-        Line::styled(
-            format!("  ETA ~{}", format_duration(Duration::from_secs(remaining))),
-            Style::default().fg(Color::DarkGray),
-        )
-    } else {
-        Line::styled("  Calculating ETA...", Style::default().fg(Color::DarkGray))
+    // 3. Current Step
+    let step_num = match app.analysis_step {
+        AnalysisStep::Preparing => 1,
+        AnalysisStep::Account => 2,
+        AnalysisStep::Messages => 3,
+        AnalysisStep::Servers => 4,
+        AnalysisStep::Support => 5,
+        AnalysisStep::Activity => 6,
+        AnalysisStep::Activities => 7,
+        AnalysisStep::Programs => 8,
+        AnalysisStep::Writing => 9,
+        AnalysisStep::Complete => 9,
     };
-    frame.render_widget(Paragraph::new(eta_line), sections[2]);
-}
-
-pub(crate) fn draw_downloading(frame: &mut ratatui::Frame<'_>, app: &AppState) {
-    let area = frame.area();
     frame.render_widget(
-        Block::default().style(Style::default().bg(Color::Black)),
-        area,
+        Paragraph::new(Line::styled(
+            format!("Step {step_num} of 9: {}...", app.analysis_step.label()),
+            Style::default().fg(Color::White),
+        ))
+        .alignment(Alignment::Center),
+        sections[2],
     );
-    let card = centered_rect(64, 50, area);
-    frame.render_widget(Clear, card);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("  Downloading Attachments  ")
-        .border_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(card);
-    frame.render_widget(block, card);
-
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(4), Constraint::Length(3)])
-        .split(inner);
-
-    let spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let spinner = spinner_frames[((app.animation_tick / 2) % spinner_frames.len() as u64) as usize];
-
-    let text_lines = vec![
-        Line::from(""),
-        Line::styled(
-            format!(" {spinner} Downloading media and attachments..."),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Line::from(""),
-        Line::styled(
-            format!("    {}", app.status),
+    // 4. Status Detail
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            format!("  {}", app.status),
             Style::default().fg(Color::Gray),
-        ),
-    ];
-    frame.render_widget(
-        Paragraph::new(text_lines).wrap(Wrap { trim: true }),
-        sections[0],
+        ))
+        .wrap(Wrap { trim: true }),
+        sections[3],
     );
 
-    let pct = app.download_progress * 100.0;
-    let label = format!("  {pct:>5.1}%");
-    let gauge = Gauge::default()
-        .gauge_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        )
-        .ratio(app.download_progress as f64)
-        .label(label);
-    frame.render_widget(gauge, sections[1]);
+    // 5. Checklist
+    let steps = [
+        (AnalysisStep::Account, "✓ Account"),
+        (AnalysisStep::Messages, "✓ Messages"),
+        (AnalysisStep::Servers, "✓ Servers"),
+        (AnalysisStep::Support, "✓ Support"),
+        (AnalysisStep::Activity, "✓ Activity"),
+        (AnalysisStep::Activities, "✓ Activities"),
+        (AnalysisStep::Programs, "✓ Programs"),
+    ];
+
+    let mut checklist_lines = Vec::new();
+    let current_step_idx = match app.analysis_step {
+        AnalysisStep::Preparing => 0,
+        AnalysisStep::Account => 0,
+        AnalysisStep::Messages => 1,
+        AnalysisStep::Servers => 2,
+        AnalysisStep::Support => 3,
+        AnalysisStep::Activity => 4,
+        AnalysisStep::Activities => 5,
+        AnalysisStep::Programs => 6,
+        _ => 7,
+    };
+
+    for (i, (step, label)) in steps.iter().enumerate() {
+        let (icon, style) = if i < current_step_idx {
+            ("✓", Style::default().fg(Color::Green))
+        } else if i == current_step_idx {
+            ("●", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        } else {
+            ("○", Style::default().fg(Color::DarkGray))
+        };
+        
+        let label_no_check = label.strip_prefix("✓ ").unwrap_or(label);
+        
+        // Mini Progress bar for each step? 
+        // For simplicity let's just do the icons as requested.
+        let mut row = vec![
+            ratatui::text::Span::styled(format!("  {} {:<12} ", icon, label_no_check), style),
+        ];
+        
+        if i == current_step_idx {
+            // Add a mini bar or just padding
+            row.push(ratatui::text::Span::styled("  ██████████░░░░░░░░░░░░░", style));
+        } else if i < current_step_idx {
+            row.push(ratatui::text::Span::styled("  ███████████████████████", Style::default().fg(Color::Green)));
+        } else {
+            row.push(ratatui::text::Span::styled("  ░░░░░░░░░░░░░░░░░░░░░░░", Style::default().fg(Color::DarkGray)));
+        }
+        
+        checklist_lines.push(Line::from(row));
+    }
+
+    frame.render_widget(
+        Paragraph::new(checklist_lines)
+            .block(Block::default().borders(Borders::ALL).title(" Progress "))
+            .wrap(Wrap { trim: false }),
+        sections[4],
+    );
+
+    // 6. Buttons
+    let buttons = Line::from(vec![
+        ratatui::text::Span::styled("  [Run in Background]  ", Style::default().fg(Color::Cyan)),
+        ratatui::text::Span::styled("  [Cancel]  ", Style::default().fg(Color::Red)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(buttons).alignment(Alignment::Center),
+        sections[5],
+    );
 }
+
 
 pub(crate) fn draw_setup(frame: &mut ratatui::Frame<'_>, app: &AppState) {
     let area = frame.area();
