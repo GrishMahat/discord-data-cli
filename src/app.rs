@@ -807,45 +807,6 @@ pub(crate) fn poll_gallery(app: &mut AppState) {
     }
 }
 
-pub(crate) fn refresh_gallery_data(app: &mut AppState) -> Result<()> {
-    let results_dir = app.config.results_path(&app.config_path, &app.id);
-    let mut files = Vec::new();
-    
-    if results_dir.exists() {
-        let categories = [
-            "imgs", "vids", "audios", "docs", "txts", "codes", "data", "exes", "zips", "unknowns",
-        ];
-        
-        for cat in categories {
-            let cat_dir = results_dir.join(cat);
-            if cat_dir.is_dir() {
-                if let Ok(entries) = fs::read_dir(cat_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_file() {
-                            let name = path.file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("unknown")
-                                .to_owned();
-                            let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                            files.push(AttachmentFile {
-                                name,
-                                _path: path,
-                                size,
-                                category: cat.to_owned(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    files.sort_by(|a, b| a.name.cmp(&b.name));
-    app.gallery.files = files;
-    Ok(())
-}
-
 pub(crate) fn filtered_gallery_files(app: &AppState) -> Vec<AttachmentFile> {
     if let Some(cat) = &app.gallery.category_filter {
         app.gallery.files
