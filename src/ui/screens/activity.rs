@@ -93,13 +93,11 @@ pub(crate) fn draw_activity(frame: &mut ratatui::Frame<'_>, app: &AppState, area
             all_event_count,
             &by_type,
         );
+        let message = if app.activity_loading { "  Loading logs..." } else { "  No matches." };
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
-                Line::styled(
-                    "  No activity events match current filters.",
-                    Style::default().fg(Color::DarkGray),
-                ),
+                Line::styled(message, Style::default().fg(Color::Cyan)),
                 Line::styled(
                     "  Use / t y [ ] to edit filters, o to change sort, c to clear.",
                     Style::default().fg(Color::DarkGray),

@@ -13,13 +13,15 @@ use crate::{
 pub(crate) fn draw_support_activity(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let tickets: &[SupportTicketView] = app.support_tickets.as_deref().unwrap_or(&[]);
     if tickets.is_empty() {
+        let message = if app.support_activity_loading {
+            "  Loading support tickets in background..."
+        } else {
+            "  No support tickets found (or not loaded yet)."
+        };
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
-                Line::styled(
-                    "  No support tickets found (or not loaded yet).",
-                    Style::default().fg(Color::DarkGray),
-                ),
+                Line::styled(message, Style::default().fg(Color::Cyan)),
                 Line::from(""),
                 Line::styled(
                     "  Press r to reload from your export.",

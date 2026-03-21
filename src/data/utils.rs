@@ -303,35 +303,9 @@ pub(crate) fn read_records_tail(path: &Path, n: usize) -> Result<Vec<Value>> {
         return Ok(items);
     }
 
-    // Larger file: check if it's NDJSON by looking at the first 1KB
-    let mut head = vec![0u8; 1024.min(file_size as usize)];
-    {
-        use std::io::Read;
-        let mut f = File::open(path)?;
-        f.read_exact(&mut head).ok();
-    }
-
-    let is_json_array = head.iter().any(|&b| !b.is_ascii_whitespace() && b == b'[');
-
-    if is_json_array {
-        // Standard JSON array: we must stream from start to find the tail
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<Value>();
-        let mut tail = std::collections::VecDeque::with_capacity(n);
-        for item in stream {
-            if let Ok(value) = item {
-                if tail.len() >= n {
-                    tail.pop_front();
-                }
-                tail.push_back(value);
-            }
-        }
-        Ok(tail.into_iter().collect())
-    } else {
-        // Assume NDJSON or similar: use seeking logic (like activity.rs)
-        read_ndjson_tail(path, n, 512 * 1024)
-    }
+    // Larger file: always use seeking logic (Binary Back-scan)
+    // We try to read the last 2MB which is almost always enough for 250 records
+    read_ndjson_tail(path, n, 2 * 1024 * 1024)
 }
 
 pub(crate) fn read_ndjson_tail(path: &Path, n: usize, max_tail_bytes: u64) -> Result<Vec<Value>> {
@@ -355,10 +329,17 @@ pub(crate) fn read_ndjson_tail(path: &Path, n: usize, max_tail_bytes: u64) -> Re
 
     for line in lines.into_iter().rev() {
         let line = line.trim();
-        if line.is_empty() {
+        if line.is_empty() || line == "[" || line == "]" {
             continue;
         }
-        if let Ok(val) = serde_json::from_str::<Value>(line) {
+        
+        // Clean up common JSON array punctuation (trailing commas, etc.)
+        let clean_line = line.strip_suffix(',').unwrap_or(line).trim();
+        if clean_line.is_empty() || clean_line == "{" || clean_line == "}" {
+            // Very minimal rows might just be braces, but usually we want at least some data
+        }
+
+        if let Ok(val) = serde_json::from_str::<Value>(clean_line) {
             records.push(val);
             if records.len() >= n {
                 break;
