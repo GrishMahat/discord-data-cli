@@ -1,4 +1,4 @@
-use std::time::Duration;
+// Analysis progress and setup screens
 
 use ratatui::{
     layout::{Constraint, Direction, Layout},
@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppState, SetupStep, format_duration},
+    app::{AppState, SetupStep},
     analyzer::AnalysisStep,
     ui::components::{centered_rect, fit_input_for_box},
 };
@@ -105,13 +105,14 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
 
     // 5. Checklist
     let steps = [
-        (AnalysisStep::Account, "✓ Account"),
-        (AnalysisStep::Messages, "✓ Messages"),
-        (AnalysisStep::Servers, "✓ Servers"),
-        (AnalysisStep::Support, "✓ Support"),
-        (AnalysisStep::Activity, "✓ Activity"),
-        (AnalysisStep::Activities, "✓ Activities"),
-        (AnalysisStep::Programs, "✓ Programs"),
+        (AnalysisStep::Account, "Account"),
+        (AnalysisStep::Messages, "Messages"),
+        (AnalysisStep::Servers, "Servers"),
+        (AnalysisStep::Support, "Support"),
+        (AnalysisStep::Activity, "Activity"),
+        (AnalysisStep::Activities, "Activities"),
+        (AnalysisStep::Programs, "Programs"),
+        (AnalysisStep::Writing, "Writing"),
     ];
 
     let mut checklist_lines = Vec::new();
@@ -124,45 +125,83 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
         AnalysisStep::Activity => 4,
         AnalysisStep::Activities => 5,
         AnalysisStep::Programs => 6,
-        _ => 7,
+        AnalysisStep::Writing => 7,
+        AnalysisStep::Complete => 8,
     };
 
-    for (i, (step, label)) in steps.iter().enumerate() {
+    for (i, (_step, label)) in steps.iter().enumerate() {
         let (icon, style) = if i < current_step_idx {
             ("✓", Style::default().fg(Color::Green))
         } else if i == current_step_idx {
-            ("●", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            (
+                "●",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
             ("○", Style::default().fg(Color::DarkGray))
         };
-        
-        let label_no_check = label.strip_prefix("✓ ").unwrap_or(label);
-        
-        // Mini Progress bar for each step? 
-        // For simplicity let's just do the icons as requested.
+
         let mut row = vec![
-            ratatui::text::Span::styled(format!("  {} {:<12} ", icon, label_no_check), style),
+            ratatui::text::Span::styled(format!("  {} {:<12} ", icon, label), style),
         ];
-        
+
+        let bar_width: usize = 30;
         if i == current_step_idx {
-            // Add a mini bar or just padding
-            row.push(ratatui::text::Span::styled("  ██████████░░░░░░░░░░░░░", style));
+            // Estimate progress within the current step (roughly)
+            // Steps 1..=8 correspond to i 0..=7 (Account..Writing)
+            let step_start = (i + 1) as f32 / 9.0;
+            let step_end = (i + 2) as f32 / 9.0;
+            let step_progress = if app.analysis_progress > step_start {
+                ((app.analysis_progress - step_start) / (step_end - step_start)).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            
+            let filled = (step_progress * bar_width as f32) as usize;
+            let bar = format!(
+                "{}{}",
+                "█".repeat(filled),
+                "░".repeat(bar_width.saturating_sub(filled))
+            );
+            row.push(ratatui::text::Span::styled(bar, style));
         } else if i < current_step_idx {
-            row.push(ratatui::text::Span::styled("  ███████████████████████", Style::default().fg(Color::Green)));
+            row.push(ratatui::text::Span::styled(
+                "█".repeat(bar_width),
+                Style::default().fg(Color::Green),
+            ));
         } else {
-            row.push(ratatui::text::Span::styled("  ░░░░░░░░░░░░░░░░░░░░░░░", Style::default().fg(Color::DarkGray)));
+            row.push(ratatui::text::Span::styled(
+                "░".repeat(bar_width),
+                Style::default().fg(Color::DarkGray),
+            ));
         }
-        
+
         checklist_lines.push(Line::from(row));
     }
 
+    // Center the checklist horizontally
+    let checklist_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(2),
+            Constraint::Length(55),
+            Constraint::Min(2),
+        ])
+        .split(sections[4]);
+
     frame.render_widget(
         Paragraph::new(checklist_lines)
-            .block(Block::default().borders(Borders::ALL).title(" Progress "))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Progress ")
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            )
             .wrap(Wrap { trim: false }),
-        sections[4],
+        checklist_cols[1],
     );
-
     // 6. Buttons
     let buttons = Line::from(vec![
         ratatui::text::Span::styled("  [Run in Background]  ", Style::default().fg(Color::Cyan)),

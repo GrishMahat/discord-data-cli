@@ -1,0 +1,19 @@
+pub(crate) mod home;
+pub(crate) mod setup;
+pub(crate) mod channel_list;
+pub(crate) mod messages;
+pub(crate) mod support;
+pub(crate) mod activity;
+pub(crate) mod overview;
+pub(crate) mod gallery;
+pub(crate) mod settings;
+
+pub(crate) use home::*;
+pub(crate) use setup::*;
+pub(crate) use channel_list::*;
+pub(crate) use messages::*;
+pub(crate) use support::*;
+pub(crate) use activity::*;
+pub(crate) use overview::*;
+pub(crate) use gallery::*;
+pub(crate) use settings::*;
