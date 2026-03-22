@@ -20,7 +20,7 @@ pub struct ActivityEventPreview {
     pub event_type: String,
     pub summary: String,
     pub source_file: String,
-    pub date_key: Option<String>,
+    pub _date_key: Option<String>,
     pub sort_key: String,
     pub detail: String,
 }
@@ -99,7 +99,7 @@ fn parse_activity_event_preview(value: &Value, source_file: &str) -> ActivityEve
         event_type,
         summary,
         source_file: source_file.to_owned(),
-        date_key,
+        _date_key: date_key,
         sort_key,
         detail,
     }

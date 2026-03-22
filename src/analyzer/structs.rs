@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -109,15 +109,29 @@ pub struct Temporal {
 
 impl Temporal {
     pub(crate) fn merge(&mut self, other: &Self) {
-        if self.first_message_date.is_none() || (other.first_message_date.is_some() && other.first_message_date.as_ref().unwrap() < self.first_message_date.as_ref().unwrap()) {
+        if self.first_message_date.is_none()
+            || (other.first_message_date.is_some()
+                && other.first_message_date.as_ref().unwrap()
+                    < self.first_message_date.as_ref().unwrap())
+        {
             self.first_message_date = other.first_message_date.clone();
         }
-        if self.last_message_date.is_none() || (other.last_message_date.is_some() && other.last_message_date.as_ref().unwrap() > self.last_message_date.as_ref().unwrap()) {
+        if self.last_message_date.is_none()
+            || (other.last_message_date.is_some()
+                && other.last_message_date.as_ref().unwrap()
+                    > self.last_message_date.as_ref().unwrap())
+        {
             self.last_message_date = other.last_message_date.clone();
         }
-        for (h, c) in &other.by_hour { *self.by_hour.entry(*h).or_insert(0) += c; }
-        for (d, c) in &other.by_day_of_week { *self.by_day_of_week.entry(*d).or_insert(0) += c; }
-        for (m, c) in &other.by_month { *self.by_month.entry(*m).or_insert(0) += c; }
+        for (h, c) in &other.by_hour {
+            *self.by_hour.entry(*h).or_insert(0) += c;
+        }
+        for (d, c) in &other.by_day_of_week {
+            *self.by_day_of_week.entry(*d).or_insert(0) += c;
+        }
+        for (m, c) in &other.by_month {
+            *self.by_month.entry(*m).or_insert(0) += c;
+        }
     }
 }
 

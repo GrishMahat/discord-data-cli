@@ -1,3 +1,5 @@
+// The brain center of the operation. Keeps track of everything so you don't have to.
+
 use std::{
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool, mpsc::Receiver},
@@ -9,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use anyhow::{Context, Result};
 
 use crate::{analyzer, config::AppConfig, data};
-pub(crate) use data::{ActivityEventPreview, SupportTicketView, ChannelKind, MessageChannel};
+pub(crate) use data::{ActivityEventPreview, SupportTicketView, ChannelKind};
 
 pub(crate) mod events;
 pub(crate) mod state;
@@ -17,6 +19,7 @@ pub(crate) mod state;
 pub(crate) use events::*;
 pub(crate) use state::*;
 
+// Settings you didn't ask for but got anyway. You're welcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct InteractiveSettings {
     pub(crate) download_attachments: bool,
@@ -26,12 +29,13 @@ pub(crate) struct InteractiveSettings {
 impl Default for InteractiveSettings {
     fn default() -> Self {
         Self {
-            download_attachments: false,
-            preview_messages: 40,
+            download_attachments: false,  // By default, don't download that embarrassing video
+            preview_messages: 40,          // Show 40 messages of shame per channel
         }
     }
 }
 
+// Which channels do you want to relive? ALL OF THEM? Bold choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ChannelFilter {
     All,
@@ -45,14 +49,15 @@ impl ChannelFilter {
     pub(crate) fn label(self) -> &'static str {
         match self {
             ChannelFilter::All => "All",
-            ChannelFilter::Dm => "DMs",
+            ChannelFilter::Dm => "DMs",  // Where you said things you'd never say in public
             ChannelFilter::GroupDm => "Group DMs",
-            ChannelFilter::PublicThread => "Public Threads",
-            ChannelFilter::Voice => "Voice",
+            ChannelFilter::PublicThread => "Public Threads",  // Arguments for everyone to enjoy
+            ChannelFilter::Voice => "Voice",  // Your sleep-deprived ramblings
         }
     }
 }
 
+// Every state this app can be in. It's like a Tamagotchi, but for analyzing your life choices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Screen {
     Setup,
@@ -70,6 +75,7 @@ pub(crate) enum Screen {
     Gallery,
 }
 
+// For when you need to find THAT ONE MESSAGE from THREE YEARS AGO.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ActivityFilterField {
     Query,
@@ -79,11 +85,12 @@ pub(crate) enum ActivityFilterField {
     ToDate,
 }
 
+// In what order should your digital archaeology be presented?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ActivitySortMode {
-    Newest,
-    Oldest,
-    EventType,
+    Newest,     // What have you done recently?
+    Oldest,     // The good old days... or were they?
+    EventType,  // Let's group the cringe by category!
 }
 
 impl ActivitySortMode {
@@ -95,6 +102,7 @@ impl ActivitySortMode {
         }
     }
 
+    // Cycle through modes. It's like a slot machine but with less money.
     pub(crate) fn next(self) -> Self {
         match self {
             ActivitySortMode::Newest => ActivitySortMode::Oldest,
@@ -104,6 +112,8 @@ impl ActivitySortMode {
     }
 }
 
+// The filters that stand between you and your message history.
+// Don't worry, we'll find that message from 2019. Eventually.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ActivityFilters {
     pub(crate) query: String,
@@ -113,6 +123,7 @@ pub(crate) struct ActivityFilters {
     pub(crate) to_date: String,
 }
 
+// The steps to happiness (or at least to seeing your data).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SetupStep {
     ExportPath,
@@ -133,6 +144,7 @@ pub(crate) struct SetupState {
 
 impl SetupState {
     fn new(default_export: String) -> Self {
+        // First date with the app: show us where your Discord lives.
         Self {
             step: SetupStep::ExportPath,
             input: default_export.clone(),
@@ -144,6 +156,7 @@ impl SetupState {
     }
 }
 
+// What the config file looks like on disk. Spoiler: it's TOML.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct InteractiveSession {
     pub(crate) config: AppConfig,
@@ -151,6 +164,7 @@ pub(crate) struct InteractiveSession {
     pub(crate) settings: InteractiveSettings,
 }
 
+// A file in the gallery. Could be an image of your lunch. Could be something else.
 #[derive(Debug, Clone)]
 pub(crate) struct AttachmentFile {
     pub(crate) name: String,
@@ -159,6 +173,7 @@ pub(crate) struct AttachmentFile {
     pub(crate) category: String,
 }
 
+// The gallery state. It remembers where you were, unlike you remembering where you put that file.
 #[derive(Debug, Clone)]
 pub(crate) struct GalleryState {
     pub(crate) files: Vec<AttachmentFile>,
@@ -167,6 +182,7 @@ pub(crate) struct GalleryState {
     pub(crate) category_filter: Option<String>,
 }
 
+// THE ONE RING TO RULE THEM ALL. Everything this app knows lives here.
 pub(crate) struct AppState {
     pub(crate) config: AppConfig,
     pub(crate) config_path: PathBuf,
@@ -206,7 +222,7 @@ pub(crate) struct AppState {
     pub(crate) activity_sort: ActivitySortMode,
     pub(crate) activity_detail_scroll: usize,
     pub(crate) gallery: GalleryState,
-    pub(crate) last_data_mtime: u64,
+    pub(crate) _last_data_mtime: u64,
     pub(crate) support_activity_loading: bool,
     pub(crate) activity_loading: bool,
     pub(crate) support_activity_rx: Option<Receiver<SupportActivityEvent>>,
@@ -216,6 +232,7 @@ pub(crate) struct AppState {
 
 impl AppState {
     pub(crate) fn new(config_path: PathBuf) -> Result<Self> {
+        // Check if we have a previous session. We remember, even when you don't.
         let mut session: Option<InteractiveSession> = None;
         if config_path.exists()
             && let Ok(content) = fs::read_to_string(&config_path)
@@ -227,6 +244,7 @@ impl AppState {
         let cwd = env::current_dir().with_context(|| "failed to read current directory".to_owned())?;
         let default_export = cwd.display().to_string();
 
+        // Spawn a new app with default values. It's like a baby, but made of code.
         let mut app = Self {
             config: session.as_ref().map(|s| s.config.clone()).unwrap_or_default(),
             config_path: config_path.clone(),
@@ -271,7 +289,7 @@ impl AppState {
                 scroll: 0,
                 category_filter: None,
             },
-            last_data_mtime: 0,
+            _last_data_mtime: 0,
             support_activity_loading: false,
             activity_loading: false,
             support_activity_rx: None,
@@ -279,6 +297,7 @@ impl AppState {
             gallery_rx: None,
         };
 
+        // If there was a session, pick up where we left off!
         if session.is_some() {
             let pkg_dir = app.config.package_path(&app.config_path, &app.id);
             if pkg_dir.exists() {
@@ -291,6 +310,7 @@ impl AppState {
         Ok(app)
     }
 
+    // "Save your progress" - the game's way of being responsible.
     pub(crate) fn save_session(&self) {
         let session = InteractiveSession {
             config: self.config.clone(),
@@ -303,6 +323,7 @@ impl AppState {
     }
 }
 
+// The main menu. All your life choices, neatly organized.
 pub(crate) const HOME_MENU_ITEMS: [(&str, &str); 13] = [
     ("Analyze Now", "Run full analysis on your Discord export"),
     ("Overview", "View analysis summary and statistics"),

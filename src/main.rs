@@ -6,6 +6,9 @@ mod downloader;
 mod input;
 mod ui;
 
+// Somewhere in the void, a Discord server stores 5 years of your embarrassing messages.
+// This program is here to remind you of all your life choices.
+
 use std::{
     env,
     fs::{self, File},
@@ -23,6 +26,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
+// When you ctrl+C, the terminal goes "ow" and puts its clothes back on.
 struct TerminalGuard;
 
 impl TerminalGuard {

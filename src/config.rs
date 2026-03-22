@@ -1,7 +1,12 @@
+// Where do Discord files hide? That's what we try to figure out here.
+// Spoiler: They're hiding in directories with creative names like "messages" and "activity".
+
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+// The UI doesn't actually use these, but SOMEONE might want a window someday.
+// Until then, it's just vibes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiConfig {
     #[serde(default = "default_window_width")]
@@ -10,6 +15,7 @@ pub struct UiConfig {
     pub window_height: f32,
 }
 
+// The big kahuna. Where all your Discord secrets are stored and judged.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub package_directory: String,
@@ -20,6 +26,8 @@ pub struct AppConfig {
     pub source_aliases: SourceAliases,
 }
 
+// Because apparently "messages" isn't a universal concept.
+// Discord said "let's call it 'support tickets' today and 'support_tickets' tomorrow."
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceAliases {
     #[serde(default = "default_account_aliases")]
@@ -40,6 +48,8 @@ pub struct SourceAliases {
 
 impl Default for AppConfig {
     fn default() -> Self {
+        // Default paths because we assume you're running this in your Discord export folder.
+        // Where else would you be? Definitely not in /opt.
         Self {
             package_directory: "./package{ID}".to_owned(),
             results_directory: "./results{ID}".to_owned(),
@@ -100,10 +110,12 @@ fn default_programs_aliases() -> Vec<String> {
     vec!["programs".to_owned()]
 }
 
+// Ah yes, "servers" - the places where you were once important, now just folders.
 fn default_servers_aliases() -> Vec<String> {
     vec!["servers".to_owned()]
 }
 
+// Support tickets go by many names, like me at different stages of debugging.
 fn default_support_tickets_aliases() -> Vec<String> {
     vec![
         "support_tickets".to_owned(),
@@ -113,15 +125,18 @@ fn default_support_tickets_aliases() -> Vec<String> {
 }
 
 impl AppConfig {
+    // Where did I put those messages again? Ah yes, HERE.
     pub fn package_path(&self, config_path: &Path, id: &str) -> PathBuf {
         resolve_template_path(&self.package_directory, config_path, id)
     }
 
+    // And where shall we dump the results? I vote for "somewhere I can find later."
     pub fn results_path(&self, config_path: &Path, id: &str) -> PathBuf {
         resolve_template_path(&self.results_directory, config_path, id)
     }
 }
 
+// This is the actual hero. It takes "{ID}" and makes it "GrishIsCool" or something equally embarrassing.
 fn resolve_template_path(raw: &str, config_path: &Path, id: &str) -> PathBuf {
     let replaced = raw.replace("{ID}", id);
     let path = PathBuf::from(replaced);
