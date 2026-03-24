@@ -1,12 +1,15 @@
+use anyhow::{bail, Result};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::{AtomicBool, Ordering}},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
-use anyhow::{Result, bail};
-use serde::{Deserialize, Serialize};
 
 pub mod report;
 pub mod structs;
@@ -17,7 +20,16 @@ pub use structs::AnalysisData;
 // The many steps of analysis. Like grief, but for data processing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AnalysisStep {
-    Preparing, Account, Messages, Servers, Support, Activity, Activities, Programs, Writing, Complete,
+    Preparing,
+    Account,
+    Messages,
+    Servers,
+    Support,
+    Activity,
+    Activities,
+    Programs,
+    Writing,
+    Complete,
 }
 
 impl AnalysisStep {
@@ -43,6 +55,9 @@ pub struct AnalysisProgress {
     pub fraction: f32,
     pub step: AnalysisStep,
     pub label: String,
+    pub current_file: Option<String>,
+    pub files_processed: Option<u32>,
+    pub total_files: Option<u32>,
 }
 
 // The main analysis function. It coordinates everything. Like a project manager, but faster.
@@ -61,14 +76,29 @@ where
     let step_frac = |s: f32| (s / TOTAL_STEPS).clamp(0.0, 1.0);
 
     // Give me a reason to stop playing god and end this thread right now.
-    let check_abort = || { if abort.load(Ordering::SeqCst) { bail!("Analysis canceled by user."); } Ok(()) };
+    let check_abort = || {
+        if abort.load(Ordering::SeqCst) {
+            bail!("Analysis canceled by user.");
+        }
+        Ok(())
+    };
 
     check_abort()?;
     // "We are entering the matrix..."
-    emit(&mut on_progress, step_frac(0.0), AnalysisStep::Preparing, "Preparing analysis...");
+    emit(
+        &mut on_progress,
+        step_frac(0.0),
+        AnalysisStep::Preparing,
+        "Preparing analysis...",
+    );
 
     let package_dir = config.package_path(config_path, id);
-    if !package_dir.exists() { bail!("package_directory does not exist: {}", package_dir.display()); }
+    if !package_dir.exists() {
+        bail!(
+            "package_directory does not exist: {}",
+            package_dir.display()
+        );
+    }
     let results_dir = config.results_path(config_path, id);
     fs::create_dir_all(&results_dir)?;
 
@@ -97,9 +127,17 @@ where
     };
 
     check_abort()?;
-    emit(&mut on_progress, step_frac(1.0), AnalysisStep::Account, "Analyzing account...");
-    if let Some(d) = &source_dirs.account { workers::analyze_account(d, &mut stats)?; }
-    else { stats.warnings.push("Account directory missing.".to_owned()); }
+    emit(
+        &mut on_progress,
+        step_frac(1.0),
+        AnalysisStep::Account,
+        "Analyzing account...",
+    );
+    if let Some(d) = &source_dirs.account {
+        workers::analyze_account(d, &mut stats)?;
+    } else {
+        stats.warnings.push("Account directory missing.".to_owned());
+    }
 
     emit(
         &mut on_progress,
@@ -176,11 +214,44 @@ where
     Ok(stats)
 }
 
-fn emit<F>(on_progress: &mut F, fraction: f32, step: AnalysisStep, label: impl Into<String>) where F: FnMut(AnalysisProgress) {
-    on_progress(AnalysisProgress { fraction, step, label: label.into() });
+fn emit<F>(on_progress: &mut F, fraction: f32, step: AnalysisStep, label: impl Into<String>)
+where
+    F: FnMut(AnalysisProgress),
+{
+    on_progress(AnalysisProgress {
+        fraction,
+        step,
+        label: label.into(),
+        current_file: None,
+        files_processed: None,
+        total_files: None,
+    });
 }
 
-pub fn read_data(results_dir: &Path) -> Result<Option<AnalysisData>> { report::read_data(results_dir) }
+fn emit_file<F>(
+    on_progress: &mut F,
+    fraction: f32,
+    step: AnalysisStep,
+    label: &str,
+    current_file: &str,
+    files_processed: u32,
+    total_files: u32,
+) where
+    F: FnMut(AnalysisProgress),
+{
+    on_progress(AnalysisProgress {
+        fraction,
+        step,
+        label: label.into(),
+        current_file: Some(current_file.to_owned()),
+        files_processed: Some(files_processed),
+        total_files: Some(total_files),
+    });
+}
+
+pub fn read_data(results_dir: &Path) -> Result<Option<AnalysisData>> {
+    report::read_data(results_dir)
+}
 
 // The source directories structure. Where each type of data is located.
 struct SourceDirs {
@@ -208,8 +279,18 @@ impl SourceDirs {
     }
     // Did the user delete half the directories? Let's check.
     fn presence_map(&self) -> BTreeMap<String, bool> {
-        [("account", self.account.is_some()), ("activity", self.activity.is_some()), ("activities", self.activities.is_some()), ("messages", self.messages.is_some()), ("programs", self.programs.is_some()), ("servers", self.servers.is_some()), ("support_tickets", self.support_tickets.is_some())]
-            .into_iter().map(|(k, v)| (k.to_owned(), v)).collect()
+        [
+            ("account", self.account.is_some()),
+            ("activity", self.activity.is_some()),
+            ("activities", self.activities.is_some()),
+            ("messages", self.messages.is_some()),
+            ("programs", self.programs.is_some()),
+            ("servers", self.servers.is_some()),
+            ("support_tickets", self.support_tickets.is_some()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v))
+        .collect()
     }
 }
 
@@ -230,8 +311,24 @@ fn utc_now_iso8601() -> String {
 
 fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     let mut year = 1970;
-    while days >= if is_leap(year) { 366 } else { 365 } { days -= if is_leap(year) { 366 } else { 365 }; year += 1; }
-    let mdays = [31, if is_leap(year) { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    while days >= if is_leap(year) { 366 } else { 365 } {
+        days -= if is_leap(year) { 366 } else { 365 };
+        year += 1;
+    }
+    let mdays = [
+        31,
+        if is_leap(year) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 1;
     for &d in &mdays {
         if days < d {

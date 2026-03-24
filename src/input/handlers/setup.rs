@@ -57,7 +57,7 @@ pub(crate) fn handle_analyzing_mouse(app: &mut AppState, mouse: MouseEvent) -> R
     
     let (width, height) = size()?;
     let area = Rect::new(0, 0, width, height);
-    let card = centered_rect(80, 80, area);
+    let card = centered_rect(74, 64, area);
     
     let block = Block::default().borders(Borders::ALL);
     let inner = block.inner(card);
@@ -65,16 +65,22 @@ pub(crate) fn handle_analyzing_mouse(app: &mut AppState, mouse: MouseEvent) -> R
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Title
-            Constraint::Length(3), // Main Gauge
-            Constraint::Length(2), // Current Step Label
-            Constraint::Min(2),    // Status detail
-            Constraint::Length(10), // Checklist
-            Constraint::Length(3),  // Buttons
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(10),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
         ])
         .split(inner);
         
-    let button_area = sections[5];
+    let button_area = sections[10];
     if !rect_contains(button_area, mouse.column, mouse.row) {
         return Ok(());
     }

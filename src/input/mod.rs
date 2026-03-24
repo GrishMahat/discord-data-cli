@@ -137,15 +137,13 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
 
     if app.screen == Screen::Analyzing || app.screen == Screen::Downloading {
         match key.code {
-            KeyCode::Char('b') | KeyCode::Char('B') => {
+            KeyCode::Char('r') | KeyCode::Char('R') => {
                 app.screen = Screen::Home;
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 crate::app::cancel_analysis(app);
             }
-            _ => {
-                // Ignore other keys while processing
-            }
+            _ => {}
         }
         return Ok(());
     }
