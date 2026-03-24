@@ -1,12 +1,10 @@
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
+use ratatui::layout::Rect;
 
 use crate::app::{
     AppState, HOME_MENU_ITEMS, execute_home_selection, home_item_disabled_reason,
 };
-use crate::input::{rect_contains};
-
 pub(crate) fn handle_home_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     let disabled_reason = |idx: usize| home_item_disabled_reason(app, idx);
 
@@ -49,29 +47,6 @@ pub(crate) fn handle_home_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
 }
 
 pub(crate) fn handle_home_mouse(app: &mut AppState, mouse: MouseEvent, area: Rect) -> Result<()> {
-    if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-        return Ok(());
-    }
-
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(32), Constraint::Length(36)])
-        .split(area);
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(3)])
-        .split(cols[0]);
-    let list_area = rows[0];
-
-    if !rect_contains(list_area, mouse.column, mouse.row) || list_area.height <= 2 {
-        return Ok(());
-    }
-
-    let row = mouse.row.saturating_sub(list_area.y + 1) as usize;
-    if row < HOME_MENU_ITEMS.len() {
-        app.home_cursor = row;
-        execute_home_selection(app)?;
-    }
-
+    let _ = (app, mouse, area);
     Ok(())
 }

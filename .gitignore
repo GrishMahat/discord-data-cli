@@ -3,3 +3,4 @@ target/
 .DS_Store
 interactive.session.toml
 plan.md
+data/
