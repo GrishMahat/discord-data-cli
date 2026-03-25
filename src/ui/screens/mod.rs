@@ -1,5 +1,6 @@
 pub(crate) mod gallery;
 pub(crate) mod setup;
+pub(crate) mod analyzing;
 pub(crate) mod home;
 pub(crate) mod overview;
 pub(crate) mod channel_list;

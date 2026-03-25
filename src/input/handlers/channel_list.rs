@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKin
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::app::{
-    AppState, ChannelFilter, filtered_channels, open_selected_channel, switch_filter,
+    filtered_channels, open_selected_channel, switch_filter, AppState, ChannelFilter,
 };
 use crate::input::rect_contains;
 
@@ -60,7 +60,11 @@ pub(crate) fn handle_channel_key(app: &mut AppState, key: KeyEvent) -> Result<()
     Ok(())
 }
 
-pub(crate) fn handle_channel_mouse(app: &mut AppState, mouse: MouseEvent, area: Rect) -> Result<()> {
+pub(crate) fn handle_channel_mouse(
+    app: &mut AppState,
+    mouse: MouseEvent,
+    area: Rect,
+) -> Result<()> {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(2), Constraint::Min(4)])

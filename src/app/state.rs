@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use std::{
     collections::BTreeMap,
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{atomic::Ordering, mpsc, Arc},
     thread,
     time::{Duration, Instant, SystemTime},
@@ -11,6 +11,7 @@ use std::{
 use super::*;
 use crate::{analyzer, data, downloader};
 
+#[allow(dead_code)]
 pub(crate) fn log_msg(msg: &str) {
     if let Ok(mut file) = fs::OpenOptions::new()
         .create(true)
@@ -652,6 +653,7 @@ pub(crate) fn key_help(screen: Screen) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn format_duration(d: Duration) -> String {
     let s = d.as_secs();
     format!("{:02}:{:02}", s / 60, s % 60)

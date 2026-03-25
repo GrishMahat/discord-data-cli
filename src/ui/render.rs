@@ -1,19 +1,18 @@
 use ratatui::layout::{Constraint, Direction, Layout};
 
-use crate::{
-    app::{AppState, Screen},
-};
-use crate::ui::screens::gallery::draw_gallery;
-use crate::ui::screens::setup::{draw_analyzing, draw_setup};
-use crate::ui::screens::download::draw_downloading;
-use crate::ui::screens::home::draw_home;
-use crate::ui::screens::overview::draw_overview;
-use crate::ui::screens::channel_list::draw_channels;
-use crate::ui::screens::messages::draw_message_view;
-use crate::ui::screens::support::{draw_support_activity, draw_support_ticket_detail};
-use crate::ui::screens::activity::{draw_activity, draw_activity_detail};
-use crate::ui::screens::settings::draw_settings;
+use crate::app::{AppState, Screen};
 use crate::ui::components::{draw_header, draw_sidebar_nav, draw_statusbar};
+use crate::ui::screens::activity::{draw_activity, draw_activity_detail};
+use crate::ui::screens::analyzing::draw_analyzing;
+use crate::ui::screens::channel_list::draw_channels;
+use crate::ui::screens::download::draw_downloading;
+use crate::ui::screens::gallery::draw_gallery;
+use crate::ui::screens::home::draw_home;
+use crate::ui::screens::messages::draw_message_view;
+use crate::ui::screens::overview::draw_overview;
+use crate::ui::screens::settings::draw_settings;
+use crate::ui::screens::setup::draw_setup;
+use crate::ui::screens::support::{draw_support_activity, draw_support_ticket_detail};
 
 pub(crate) fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &AppState) {
     if app.screen == Screen::Setup {
@@ -49,7 +48,7 @@ pub(crate) fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &AppState) {
     draw_sidebar_nav(frame, app, body[0]);
 
     match app.screen {
-        Screen::Home => draw_home(frame, app, body[1]),// Home screen 
+        Screen::Home => draw_home(frame, app, body[1]), // Home screen
         Screen::Overview => draw_overview(frame, app, body[1]),
         Screen::SupportActivity => draw_support_activity(frame, app, body[1]),
         Screen::SupportTicketDetail => draw_support_ticket_detail(frame, app, body[1]),
@@ -64,16 +63,3 @@ pub(crate) fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &AppState) {
 
     draw_statusbar(frame, app, chunks[2]);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -228,6 +228,7 @@ where
     });
 }
 
+#[allow(dead_code)]
 fn emit_file<F>(
     on_progress: &mut F,
     fraction: f32,

@@ -134,6 +134,7 @@ pub(crate) enum SetupStep {
 
 // A single entry visible in the folder browser panel.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct BrowseEntry {
     pub(crate) name: String,
     pub(crate) path: std::path::PathBuf,

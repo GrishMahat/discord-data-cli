@@ -1,19 +1,10 @@
 use anyhow::Result;
-use crossterm::{
-    event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    terminal::size,
-};
-use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    widgets::{Block, Borders},
-};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{
-    AppState, SetupStep, Screen, setup_prev_step, setup_submit_step,
-    is_printable_input, cancel_analysis, list_browse_entries,
+    is_printable_input, list_browse_entries, setup_prev_step, setup_submit_step, AppState,
+    SetupStep,
 };
-use crate::ui::components::centered_rect;
-use crate::input::rect_contains;
 
 pub(crate) fn handle_setup_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     match key.code {
@@ -21,7 +12,12 @@ pub(crate) fn handle_setup_key(app: &mut AppState, key: KeyEvent) -> Result<()> 
             app.should_quit = true;
         }
         // Tab toggles between input and browse panel (only on path steps)
-        KeyCode::Tab if matches!(app.setup.step, SetupStep::ExportPath | SetupStep::ResultsPath) => {
+        KeyCode::Tab
+            if matches!(
+                app.setup.step,
+                SetupStep::ExportPath | SetupStep::ResultsPath
+            ) =>
+        {
             app.setup.browse_focus = !app.setup.browse_focus;
             if app.setup.browse_focus {
                 // Refresh browse entries when switching focus to browse
@@ -41,7 +37,8 @@ pub(crate) fn handle_setup_key(app: &mut AppState, key: KeyEvent) -> Result<()> 
         }
         KeyCode::Down if app.setup.browse_focus => {
             if !app.setup.browse_entries.is_empty() {
-                app.setup.browse_cursor = (app.setup.browse_cursor + 1) % app.setup.browse_entries.len();
+                app.setup.browse_cursor =
+                    (app.setup.browse_cursor + 1) % app.setup.browse_entries.len();
             }
         }
         // Enter in browse panel: select the directory entry
@@ -89,7 +86,10 @@ pub(crate) fn handle_setup_key(app: &mut AppState, key: KeyEvent) -> Result<()> 
         }
         // Regular character input (only when not browsing)
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if is_printable_input(c) && app.setup.step != SetupStep::Confirm && !app.setup.browse_focus {
+            if is_printable_input(c)
+                && app.setup.step != SetupStep::Confirm
+                && !app.setup.browse_focus
+            {
                 app.setup.input.push(c);
             }
         }
@@ -101,7 +101,10 @@ pub(crate) fn handle_setup_key(app: &mut AppState, key: KeyEvent) -> Result<()> 
 
 /// Refresh browse entries after a step change
 fn refresh_browse_state(app: &mut AppState) {
-    if matches!(app.setup.step, SetupStep::ExportPath | SetupStep::ResultsPath) {
+    if matches!(
+        app.setup.step,
+        SetupStep::ExportPath | SetupStep::ResultsPath
+    ) {
         app.setup.browse_entries = list_browse_entries(&app.setup.input);
         app.setup.browse_cursor = 0;
         app.setup.browse_focus = false;
@@ -110,54 +113,4 @@ fn refresh_browse_state(app: &mut AppState) {
         app.setup.browse_cursor = 0;
         app.setup.browse_focus = false;
     }
-}
-
-pub(crate) fn handle_analyzing_mouse(app: &mut AppState, mouse: MouseEvent) -> Result<()> {
-    if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-        return Ok(());
-    }
-    
-    let (width, height) = size()?;
-    let area = Rect::new(0, 0, width, height);
-    let card = centered_rect(74, 64, area);
-    
-    let block = Block::default().borders(Borders::ALL);
-    let inner = block.inner(card);
-    
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(10),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
-        .split(inner);
-        
-    let button_area = sections[10];
-    if !rect_contains(button_area, mouse.column, mouse.row) {
-        return Ok(());
-    }
-    
-    // Split the button area horizontally into two
-    let btn_widths = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(button_area);
-        
-    if rect_contains(btn_widths[0], mouse.column, mouse.row) {
-        app.screen = Screen::Home;
-    } else if rect_contains(btn_widths[1], mouse.column, mouse.row) {
-        cancel_analysis(app);
-    }
-    
-    Ok(())
 }

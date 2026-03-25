@@ -1,9 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-use crate::app::{
-    AppState, Screen, filtered_gallery_files, switch_gallery_filter,
-};
+use crate::app::{filtered_gallery_files, switch_gallery_filter, AppState, Screen};
 use crate::input::rect_contains;
 
 pub(crate) fn handle_gallery_key(app: &mut AppState, key: KeyEvent) {
@@ -91,10 +89,17 @@ pub(crate) fn handle_gallery_mouse(app: &mut AppState, mouse: MouseEvent, area: 
                 return;
             }
 
-            if count > 0 && rect_contains(chunks[1], mouse.column, mouse.row) && chunks[1].height > 2 {
+            if count > 0
+                && rect_contains(chunks[1], mouse.column, mouse.row)
+                && chunks[1].height > 2
+            {
                 let visible = chunks[1].height.saturating_sub(2) as usize;
                 let page_size = visible.max(1);
-                let start = app.gallery.cursor.saturating_sub(page_size / 2).min(count.saturating_sub(page_size));
+                let start = app
+                    .gallery
+                    .cursor
+                    .saturating_sub(page_size / 2)
+                    .min(count.saturating_sub(page_size));
                 let end = (start + page_size).min(count);
                 let row = mouse.row.saturating_sub(chunks[1].y + 1) as usize;
                 if row < end.saturating_sub(start) {

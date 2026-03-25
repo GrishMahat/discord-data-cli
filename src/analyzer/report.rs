@@ -1,10 +1,6 @@
 use super::structs::AnalysisData;
 use anyhow::{Context, Result};
-use std::{
-    fs::{self, File},
-    io::BufReader,
-    path::Path,
-};
+use std::{fs::File, io::BufReader, path::Path};
 
 pub fn read_data(results_dir: &Path) -> Result<Option<AnalysisData>> {
     let data_path = results_dir.join("data.json");

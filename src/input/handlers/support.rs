@@ -2,9 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use crate::app::{
-    AppState, Screen, open_selected_support_ticket, refresh_support_activity_data,
-};
+use crate::app::{open_selected_support_ticket, refresh_support_activity_data, AppState, Screen};
 use crate::data::SupportTicketView;
 use crate::input::rect_contains;
 
@@ -84,7 +82,11 @@ pub(crate) fn handle_support_activity_mouse(app: &mut AppState, mouse: MouseEven
     }
 }
 
-pub(crate) fn handle_support_ticket_detail_mouse(app: &mut AppState, mouse: MouseEvent, area: Rect) {
+pub(crate) fn handle_support_ticket_detail_mouse(
+    app: &mut AppState,
+    mouse: MouseEvent,
+    area: Rect,
+) {
     if !rect_contains(area, mouse.column, mouse.row) {
         return;
     }
