@@ -259,7 +259,9 @@ fn cycle_sidebar_row(app: &AppState, reverse: bool) -> usize {
     // 0 Dashboard, 1 Analyze, 2 Overview, 3 Support, 4 Activity,
     // 5 Channels, 6 Gallery, 7 Download, 8 Settings, 9 Quit
     let rows = [0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-    let current = sidebar_row_for_screen(app.screen);
+    // Use sidebar_cursor if set (action rows don't change the screen),
+    // otherwise derive from current screen.
+    let current = app.sidebar_cursor.unwrap_or_else(|| sidebar_row_for_screen(app.screen));
     let current_idx = rows.iter().position(|r| *r == current).unwrap_or(0);
     let len = rows.len();
     let next_idx = if reverse {
