@@ -6,10 +6,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{
-        ActivityFilterField, AppState, 
-        filtered_activity_events, fmt_num, ratio, top_counts,
-    },
+    app::{ActivityFilterField, AppState, filtered_activity_events, fmt_num, ratio, top_counts},
     data::utils::truncate_text,
     ui::components::stat_line,
 };
@@ -93,7 +90,11 @@ pub(crate) fn draw_activity(frame: &mut ratatui::Frame<'_>, app: &AppState, area
             all_event_count,
             &by_type,
         );
-        let message = if app.activity_loading { "  Loading logs..." } else { "  No matches." };
+        let message = if app.activity_loading {
+            "  Loading logs..."
+        } else {
+            "  No matches."
+        };
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
@@ -341,11 +342,21 @@ pub(crate) fn draw_activity_quick_stats(
 
 fn activity_active_filter_count(app: &AppState) -> usize {
     let mut count = 0usize;
-    if !app.activity_filters.query.is_empty() { count += 1; }
-    if !app.activity_filters.event_type.is_empty() { count += 1; }
-    if !app.activity_filters.source_file.is_empty() { count += 1; }
-    if !app.activity_filters.from_date.is_empty() { count += 1; }
-    if !app.activity_filters.to_date.is_empty() { count += 1; }
+    if !app.activity_filters.query.is_empty() {
+        count += 1;
+    }
+    if !app.activity_filters.event_type.is_empty() {
+        count += 1;
+    }
+    if !app.activity_filters.source_file.is_empty() {
+        count += 1;
+    }
+    if !app.activity_filters.from_date.is_empty() {
+        count += 1;
+    }
+    if !app.activity_filters.to_date.is_empty() {
+        count += 1;
+    }
     count
 }
 

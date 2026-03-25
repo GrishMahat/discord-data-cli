@@ -17,7 +17,7 @@ pub(crate) fn read_json_value(path: &Path) -> Result<Value> {
 pub(crate) fn read_records_json_or_ndjson(path: &Path) -> Result<Vec<Value>> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let reader = BufReader::new(file);
-    
+
     // Attempt standard JSON first
     match serde_json::from_reader::<_, Value>(reader) {
         Ok(Value::Array(items)) => Ok(items),
@@ -53,7 +53,7 @@ pub(crate) fn read_records_json_or_ndjson(path: &Path) -> Result<Vec<Value>> {
 pub(crate) fn count_records(path: &Path) -> Result<usize> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let mut reader = BufReader::new(file);
-    
+
     // Check if it's a JSON array by looking at the first non-whitespace byte
     let mut first_byte = [0u8; 1];
     let is_json_array = loop {
@@ -109,7 +109,10 @@ pub(crate) fn find_file_case_insensitive(dir: &Path, file_name: &str) -> Result<
     Ok(None)
 }
 
-pub(crate) fn resolve_optional_subdir(package_dir: &Path, names: &[String]) -> Result<Option<PathBuf>> {
+pub(crate) fn resolve_optional_subdir(
+    package_dir: &Path,
+    names: &[String],
+) -> Result<Option<PathBuf>> {
     let mut normalized_dirs = BTreeMap::new();
     for entry in fs::read_dir(package_dir)
         .with_context(|| format!("failed to read {}", package_dir.display()))?
@@ -332,7 +335,7 @@ pub(crate) fn read_ndjson_tail(path: &Path, n: usize, max_tail_bytes: u64) -> Re
         if line.is_empty() || line == "[" || line == "]" {
             continue;
         }
-        
+
         // Clean up common JSON array punctuation (trailing commas, etc.)
         let clean_line = line.strip_suffix(',').unwrap_or(line).trim();
         if clean_line.is_empty() || clean_line == "{" || clean_line == "}" {

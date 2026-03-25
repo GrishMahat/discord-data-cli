@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKin
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::app::{
-    filtered_channels, open_selected_channel, switch_filter, AppState, ChannelFilter,
+    AppState, ChannelFilter, filtered_channels, open_selected_channel, switch_filter,
 };
 use crate::input::rect_contains;
 

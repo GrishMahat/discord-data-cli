@@ -1,6 +1,6 @@
-use std::result::Result;
-use crate::{analyzer, data::SupportTicketView, data::activity::ActivityEventPreview, downloader};
 use super::AttachmentFile;
+use crate::{analyzer, data::SupportTicketView, data::activity::ActivityEventPreview, downloader};
+use std::result::Result;
 
 pub(crate) enum AnalysisEvent {
     Progress(analyzer::AnalysisProgress),

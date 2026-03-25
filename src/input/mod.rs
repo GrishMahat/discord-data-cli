@@ -7,14 +7,12 @@ use crossterm::{
 };
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-use crate::{
-    app::{
-        AppState, Screen, screen_disabled_reason, try_load_existing_data,
-        open_support_activity, open_activity, open_channel_filter, open_gallery,
-        ChannelFilter, home_item_disabled_reason, start_analysis, handle_download_attachments,
-    },
-};
 use self::handlers::*;
+use crate::app::{
+    AppState, ChannelFilter, Screen, handle_download_attachments, home_item_disabled_reason,
+    open_activity, open_channel_filter, open_gallery, open_support_activity,
+    screen_disabled_reason, start_analysis, try_load_existing_data,
+};
 
 pub(crate) fn handle_paste(app: &mut AppState, text: &str) {
     if app.screen != Screen::Setup || app.setup.step == crate::app::SetupStep::Confirm {
@@ -79,11 +77,7 @@ fn sidebar_at_position(area: Rect, x: u16, y: u16) -> Option<usize> {
         return None;
     }
     let row = mouse_row_in_list(area, y);
-    if row < 10 {
-        Some(row)
-    } else {
-        None
-    }
+    if row < 10 { Some(row) } else { None }
 }
 
 fn mouse_row_in_list(area: Rect, y: u16) -> usize {
@@ -261,7 +255,9 @@ fn cycle_sidebar_row(app: &AppState, reverse: bool) -> usize {
     let rows = [0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     // Use sidebar_cursor if set (action rows don't change the screen),
     // otherwise derive from current screen.
-    let current = app.sidebar_cursor.unwrap_or_else(|| sidebar_row_for_screen(app.screen));
+    let current = app
+        .sidebar_cursor
+        .unwrap_or_else(|| sidebar_row_for_screen(app.screen));
     let current_idx = rows.iter().position(|r| *r == current).unwrap_or(0);
     let len = rows.len();
     let next_idx = if reverse {
@@ -298,7 +294,7 @@ fn sidebar_row_for_screen(screen: Screen) -> usize {
 
 fn sidebar_row_disabled(app: &AppState, row: usize) -> Option<String> {
     match row {
-        0 | 9 => None, // Dashboard/Quit always available
+        0 | 9 => None,                          // Dashboard/Quit always available
         1 => home_item_disabled_reason(app, 0), // Analyze
         2 => screen_disabled_reason(app, Screen::Overview),
         3 => screen_disabled_reason(app, Screen::SupportActivity),

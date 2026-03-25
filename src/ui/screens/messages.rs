@@ -5,9 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use crate::{
-    app::{AppState, ChannelKind, fmt_num},
-};
+use crate::app::{AppState, ChannelKind, fmt_num};
 
 pub(crate) fn draw_message_view(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let Some(channel) = &app.open_channel else {

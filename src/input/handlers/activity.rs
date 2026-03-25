@@ -3,8 +3,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::app::{
-    filtered_activity_events, is_printable_input, open_selected_activity_event,
-    refresh_support_activity_data, ActivityFilterField, AppState, Screen,
+    ActivityFilterField, AppState, Screen, filtered_activity_events, is_printable_input,
+    open_selected_activity_event, refresh_support_activity_data,
 };
 use crate::input::rect_contains;
 

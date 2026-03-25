@@ -5,10 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap},
 };
 
-use crate::{
-    app::AppState,
-    ui::components::centered_rect,
-};
+use crate::{app::AppState, ui::components::centered_rect};
 
 pub(crate) fn draw_downloading(frame: &mut ratatui::Frame<'_>, app: &AppState) {
     let area = frame.area();

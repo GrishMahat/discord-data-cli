@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::{
     app::AppState,
-    data::{utils::truncate_text, SupportTicketView},
+    data::{SupportTicketView, utils::truncate_text},
 };
 
 pub(crate) fn draw_support_activity(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
@@ -90,7 +90,11 @@ pub(crate) fn draw_support_activity(frame: &mut ratatui::Frame<'_>, app: &AppSta
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-pub(crate) fn draw_support_ticket_detail(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
+pub(crate) fn draw_support_ticket_detail(
+    frame: &mut ratatui::Frame<'_>,
+    app: &AppState,
+    area: Rect,
+) {
     let Some(ticket) = app
         .support_tickets
         .as_ref()

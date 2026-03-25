@@ -20,7 +20,7 @@ use anyhow::{Context, Result, bail};
 use app::AppState;
 use crossterm::{
     cursor,
-    event::{self, Event, KeyEventKind, KeyCode, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -67,7 +67,7 @@ fn main() -> Result<()> {
         .join("interactive.session.toml");
 
     let mut app = AppState::new(config_path)?;
-    
+
     // Debug logging
     let _ = fs::remove_file("/tmp/discord-cli.log");
     log_msg("App started");
@@ -82,8 +82,12 @@ fn log_msg(msg: &str) {
         .open("/tmp/discord-cli.log")
     {
         let mut file: File = file;
-        let line = format!("[{}] {}\n", 
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(), 
+        let line = format!(
+            "[{}] {}\n",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
             msg
         );
         let _ = file.write_all(line.as_bytes());
@@ -103,7 +107,10 @@ fn run_tui(app: &mut AppState) -> Result<()> {
     while !app.should_quit {
         let tick_start = Instant::now();
         if tick_start.duration_since(last_tick) > Duration::from_millis(1000) {
-            log_msg(&format!("Heartbeat, screen: {:?}, tick: {}", app.screen, app.animation_tick));
+            log_msg(&format!(
+                "Heartbeat, screen: {:?}, tick: {}",
+                app.screen, app.animation_tick
+            ));
             last_tick = tick_start;
         }
 
@@ -121,11 +128,13 @@ fn run_tui(app: &mut AppState) -> Result<()> {
         if event::poll(poll_duration).with_context(|| "event poll failed".to_owned())? {
             let ev = event::read().with_context(|| "event read failed".to_owned())?;
             log_msg(&format!("Input: {:?}", ev));
-            
+
             match ev {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     // Universal Ctrl+C
-                    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
                         log_msg("Ctrl+C detected in main loop");
                         app.should_quit = true;
                     } else {
@@ -138,7 +147,7 @@ fn run_tui(app: &mut AppState) -> Result<()> {
                 _ => {}
             }
         }
-        
+
         let loop_elapsed = tick_start.elapsed();
         if loop_elapsed > Duration::from_millis(200) {
             log_msg(&format!("SLOW LOOP: {:?}", loop_elapsed));

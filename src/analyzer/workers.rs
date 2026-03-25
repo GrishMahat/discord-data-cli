@@ -9,8 +9,8 @@ use std::{
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     sync::{
-        mpsc::{self, Sender},
         Arc, Mutex,
+        mpsc::{self, Sender},
     },
     thread,
     time::UNIX_EPOCH,
@@ -765,11 +765,7 @@ fn day_of_week(year: u32, month: u32, day: u32) -> u32 {
     const T: [u32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
     let y = if month < 3 { year - 1 } else { year };
     let dow = (y + y / 4 - y / 100 + y / 400 + T[(month - 1) as usize] + day) % 7;
-    if dow == 0 {
-        6
-    } else {
-        dow - 1
-    }
+    if dow == 0 { 6 } else { dow - 1 }
 }
 
 fn is_stop_word(w: &str) -> bool {

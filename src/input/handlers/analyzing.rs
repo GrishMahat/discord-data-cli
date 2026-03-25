@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders},
 };
 
-use crate::app::{cancel_analysis, AppState, Screen};
+use crate::app::{AppState, Screen, cancel_analysis};
 use crate::input::rect_contains;
 use crate::ui::components::centered_rect;
 

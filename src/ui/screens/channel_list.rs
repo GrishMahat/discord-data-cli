@@ -5,15 +5,16 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-use crate::{
-    app::{AppState, ChannelFilter, ChannelKind, filtered_channels, fmt_num},
-};
+use crate::app::{AppState, ChannelFilter, ChannelKind, filtered_channels, fmt_num};
 
 pub(crate) fn draw_channels(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let channels = filtered_channels(app);
 
     let filter_tabs = "  1:All  2:DMs  3:Groups  4:Threads  5:Voice";
-    let title = format!(" Channels: {} [↑↓ Select, Enter Messages, 1-5 Filter] ", app.current_filter.label());
+    let title = format!(
+        " Channels: {} [↑↓ Select, Enter Messages, 1-5 Filter] ",
+        app.current_filter.label()
+    );
 
     if channels.is_empty() {
         frame.render_widget(
@@ -29,7 +30,10 @@ pub(crate) fn draw_channels(frame: &mut ratatui::Frame<'_>, app: &AppState, area
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(format!(" Channels: {} [No matches] ", app.current_filter.label()))
+                    .title(format!(
+                        " Channels: {} [No matches] ",
+                        app.current_filter.label()
+                    ))
                     .border_style(Style::default().fg(Color::Cyan)),
             ),
             area,

@@ -4,7 +4,5 @@ pub(crate) mod support;
 pub(crate) mod utils;
 
 pub(crate) use activity::{ActivityEventPreview, load_recent_activity_events};
-pub(crate) use messages::{
-    ChannelKind, MessageChannel, load_channels, load_message_preview,
-};
+pub(crate) use messages::{ChannelKind, MessageChannel, load_channels, load_message_preview};
 pub(crate) use support::{SupportTicketView, load_support_tickets};

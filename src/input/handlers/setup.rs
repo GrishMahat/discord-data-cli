@@ -2,8 +2,8 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{
-    is_printable_input, list_browse_entries, setup_prev_step, setup_submit_step, AppState,
-    SetupStep,
+    AppState, SetupStep, is_printable_input, list_browse_entries, setup_prev_step,
+    setup_submit_step,
 };
 
 pub(crate) fn handle_setup_key(app: &mut AppState, key: KeyEvent) -> Result<()> {

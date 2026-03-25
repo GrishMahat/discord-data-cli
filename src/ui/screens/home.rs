@@ -17,7 +17,11 @@ pub(crate) fn draw_home(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Re
 fn draw_home_dashboard(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let right_rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Length(3), Constraint::Min(8)])
+        .constraints([
+            Constraint::Length(7),
+            Constraint::Length(3),
+            Constraint::Min(8),
+        ])
         .split(area);
 
     let Some(data) = &app.last_data else {
@@ -61,17 +65,23 @@ fn draw_home_dashboard(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rec
             ratatui::text::Span::styled("  Messages ", Style::default().fg(Color::DarkGray)),
             ratatui::text::Span::styled(
                 format!("{:<8}", fmt_num(data.messages.total)),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
             ratatui::text::Span::styled("Channels ", Style::default().fg(Color::DarkGray)),
             ratatui::text::Span::styled(
                 format!("{:<6}", fmt_num(data.messages.channels)),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
             ratatui::text::Span::styled("Servers ", Style::default().fg(Color::DarkGray)),
             ratatui::text::Span::styled(
                 fmt_num(data.servers.count),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
     ];
@@ -93,14 +103,12 @@ fn draw_home_dashboard(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rec
         ratatui::text::Span::styled("[E] Export", Style::default().fg(Color::DarkGray)),
     ]);
     frame.render_widget(
-        Paragraph::new(actions)
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Quick Actions ")
-                    .border_style(Style::default().fg(Color::DarkGray)),
-            ),
+        Paragraph::new(actions).alignment(Alignment::Center).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Quick Actions ")
+                .border_style(Style::default().fg(Color::DarkGray)),
+        ),
         right_rows[1],
     );
 
@@ -116,7 +124,10 @@ fn draw_home_dashboard(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rec
         .take(6)
         .map(|(name, count)| {
             Line::from(vec![
-                ratatui::text::Span::styled(format!("  {name:<18}"), Style::default().fg(Color::White)),
+                ratatui::text::Span::styled(
+                    format!("  {name:<18}"),
+                    Style::default().fg(Color::White),
+                ),
                 ratatui::text::Span::styled(
                     format!("{:>8}", fmt_num(*count)),
                     Style::default().fg(Color::DarkGray),
@@ -179,7 +190,10 @@ fn draw_home_dashboard(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rec
             ),
             Style::default().fg(Color::Cyan),
         ),
-        Line::styled(" 00   06   12   18   23", Style::default().fg(Color::DarkGray)),
+        Line::styled(
+            " 00   06   12   18   23",
+            Style::default().fg(Color::DarkGray),
+        ),
         Line::from(""),
         Line::styled(peak, Style::default().fg(Color::Gray)),
         Line::styled(
@@ -213,7 +227,10 @@ fn draw_home_dashboard(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rec
             Style::default().fg(Color::DarkGray),
         ),
         Line::styled(
-            format!(" Top words: {}", top_words_preview(&data.messages.content.top_words)),
+            format!(
+                " Top words: {}",
+                top_words_preview(&data.messages.content.top_words)
+            ),
             Style::default().fg(Color::DarkGray),
         ),
     ];
@@ -272,5 +289,3 @@ fn hour_sparkline(values: Vec<u64>) -> String {
         .collect::<Vec<_>>()
         .join("")
 }
-
-

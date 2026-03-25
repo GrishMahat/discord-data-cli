@@ -62,7 +62,13 @@ pub fn load_recent_activity_events(
         let remaining = max_events - events.len();
         let records = read_records_tail(&path, remaining.min(80))?;
         for value in records.into_iter().rev() {
-            events.push(parse_activity_event_preview(&value, &path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown.json")));
+            events.push(parse_activity_event_preview(
+                &value,
+                &path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown.json"),
+            ));
         }
     }
 

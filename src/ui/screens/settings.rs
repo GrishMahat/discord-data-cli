@@ -51,10 +51,7 @@ pub(crate) fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &AppState, area
     ];
 
     let list = List::new(items)
-        .block(
-            Block::default()
-                .title(" Settings [↑↓ Select, ←→ Adjust, Enter Toggle] ")
-        )
+        .block(Block::default().title(" Settings [↑↓ Select, ←→ Adjust, Enter Toggle] "))
         .highlight_style(
             Style::default()
                 .fg(Color::Black)

@@ -41,13 +41,19 @@ pub(crate) fn draw_gallery(frame: &mut ratatui::Frame<'_>, app: &AppState, area:
         } else {
             ("?".to_owned(), *label)
         };
-        
+
         let style = if active {
-            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        tab_spans.push(ratatui::text::Span::styled(format!(" {num_key}:{label_text} "), style));
+        tab_spans.push(ratatui::text::Span::styled(
+            format!(" {num_key}:{label_text} "),
+            style,
+        ));
         if i < categories.len() - 1 {
             tab_spans.push(ratatui::text::Span::raw(" "));
         }
@@ -66,7 +72,11 @@ pub(crate) fn draw_gallery(frame: &mut ratatui::Frame<'_>, app: &AppState, area:
 
     let visible_rows = chunks[1].height.saturating_sub(2) as usize;
     let page_size = visible_rows.max(1);
-    let start = app.gallery.cursor.saturating_sub(page_size / 2).min(files.len().saturating_sub(page_size));
+    let start = app
+        .gallery
+        .cursor
+        .saturating_sub(page_size / 2)
+        .min(files.len().saturating_sub(page_size));
     let end = (start + page_size).min(files.len());
 
     let mut items = Vec::new();
@@ -84,18 +94,39 @@ pub(crate) fn draw_gallery(frame: &mut ratatui::Frame<'_>, app: &AppState, area:
 
         let file_info = Line::from(vec![
             ratatui::text::Span::styled(format!("{idx:>4} "), Style::default().fg(Color::DarkGray)),
-            ratatui::text::Span::styled(format!("{:<10} ", file.category), Style::default().fg(cat_color)),
-            ratatui::text::Span::styled(truncate_text(&file.name, 45), Style::default().fg(Color::White)),
+            ratatui::text::Span::styled(
+                format!("{:<10} ", file.category),
+                Style::default().fg(cat_color),
+            ),
+            ratatui::text::Span::styled(
+                truncate_text(&file.name, 45),
+                Style::default().fg(Color::White),
+            ),
             ratatui::text::Span::raw("  "),
-            ratatui::text::Span::styled(format_size(file.size), Style::default().fg(Color::DarkGray)),
+            ratatui::text::Span::styled(
+                format_size(file.size),
+                Style::default().fg(Color::DarkGray),
+            ),
         ]);
         items.push(ListItem::new(file_info));
     }
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(format!(" Gallery: {} files discovered | [Enter] Open ", files.len()))
-        .border_style(Style::default().fg(Color::Cyan)))
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(
+                    " Gallery: {} files discovered | [Enter] Open ",
+                    files.len()
+                ))
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("");
 
     let mut state = ListState::default();

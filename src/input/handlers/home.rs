@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::layout::Rect;
 
-use crate::app::{execute_home_selection, home_item_disabled_reason, AppState, HOME_MENU_ITEMS};
+use crate::app::{AppState, HOME_MENU_ITEMS, execute_home_selection, home_item_disabled_reason};
 pub(crate) fn handle_home_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     let disabled_reason = |idx: usize| home_item_disabled_reason(app, idx);
 

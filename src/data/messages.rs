@@ -169,6 +169,6 @@ fn detect_channel_kind(channel: Option<&Value>) -> ChannelKind {
         .or_else(|| channel.get("channel_type"))
         .and_then(value_to_plain_string)
         .unwrap_or_else(|| "unknown".to_owned());
-    
+
     detect_channel_kind_str(&raw_type)
 }

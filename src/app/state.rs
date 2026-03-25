@@ -1,9 +1,9 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::{
     collections::BTreeMap,
     fs,
     path::PathBuf,
-    sync::{atomic::Ordering, mpsc, Arc},
+    sync::{Arc, atomic::Ordering, mpsc},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -709,11 +709,7 @@ pub(crate) fn folder_available(data: &analyzer::AnalysisData, key: &str) -> bool
 }
 
 pub(crate) fn ratio(p: u64, t: u64) -> f64 {
-    if t == 0 {
-        0.0
-    } else {
-        p as f64 / t as f64
-    }
+    if t == 0 { 0.0 } else { p as f64 / t as f64 }
 }
 pub(crate) fn fmt_num(n: u64) -> String {
     n.to_string()

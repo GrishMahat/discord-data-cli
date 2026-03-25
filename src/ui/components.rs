@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-use crate::app::{AppState, Screen, key_help, screen_disabled_reason, home_item_disabled_reason};
+use crate::app::{AppState, Screen, home_item_disabled_reason, key_help, screen_disabled_reason};
 
 pub(crate) fn draw_header(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let block = Block::default()
@@ -116,15 +116,60 @@ pub(crate) fn draw_header(frame: &mut ratatui::Frame<'_>, app: &AppState, area: 
 
 pub(crate) fn draw_sidebar_nav(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let nav = [
-        ("Dashboard", Some(Screen::Home), None, "Press Enter to open dashboard"),
-        ("Analyze Now", None, Some(0usize), "Press Enter to run full analysis"),
-        ("Overview", Some(Screen::Overview), Some(1), "Press Enter to open overview"),
-        ("Support", Some(Screen::SupportActivity), Some(2), "Press Enter to open support"),
-        ("Activity", Some(Screen::Activity), Some(3), "Press Enter to open activity"),
-        ("Channels", Some(Screen::ChannelList), Some(6), "Press Enter to open channels"),
-        ("Gallery", Some(Screen::Gallery), Some(5), "Press Enter to open gallery"),
-        ("Download", None, Some(4), "Press Enter to download attachments"),
-        ("Settings", Some(Screen::Settings), Some(11), "Press Enter to open settings"),
+        (
+            "Dashboard",
+            Some(Screen::Home),
+            None,
+            "Press Enter to open dashboard",
+        ),
+        (
+            "Analyze Now",
+            None,
+            Some(0usize),
+            "Press Enter to run full analysis",
+        ),
+        (
+            "Overview",
+            Some(Screen::Overview),
+            Some(1),
+            "Press Enter to open overview",
+        ),
+        (
+            "Support",
+            Some(Screen::SupportActivity),
+            Some(2),
+            "Press Enter to open support",
+        ),
+        (
+            "Activity",
+            Some(Screen::Activity),
+            Some(3),
+            "Press Enter to open activity",
+        ),
+        (
+            "Channels",
+            Some(Screen::ChannelList),
+            Some(6),
+            "Press Enter to open channels",
+        ),
+        (
+            "Gallery",
+            Some(Screen::Gallery),
+            Some(5),
+            "Press Enter to open gallery",
+        ),
+        (
+            "Download",
+            None,
+            Some(4),
+            "Press Enter to download attachments",
+        ),
+        (
+            "Settings",
+            Some(Screen::Settings),
+            Some(11),
+            "Press Enter to open settings",
+        ),
         ("Quit", None, Some(12), "Press Enter to quit"),
     ];
     let active = tab_group_screen(app.screen);
@@ -143,7 +188,9 @@ pub(crate) fn draw_sidebar_nav(frame: &mut ratatui::Frame<'_>, app: &AppState, a
             false
         };
         let style = if disabled {
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM)
         } else {
             Style::default().fg(Color::White)
         };

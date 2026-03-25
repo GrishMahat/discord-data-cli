@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use crate::app::{open_selected_support_ticket, refresh_support_activity_data, AppState, Screen};
+use crate::app::{AppState, Screen, open_selected_support_ticket, refresh_support_activity_data};
 use crate::data::SupportTicketView;
 use crate::input::rect_contains;
 

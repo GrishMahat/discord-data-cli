@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use crate::app::{apply_settings_selection, AppState, Screen};
+use crate::app::{AppState, Screen, apply_settings_selection};
 use crate::input::rect_contains;
 
 pub(crate) fn handle_settings_key(app: &mut AppState, key: KeyEvent) {

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-use crate::app::{filtered_gallery_files, switch_gallery_filter, AppState, Screen};
+use crate::app::{AppState, Screen, filtered_gallery_files, switch_gallery_filter};
 use crate::input::rect_contains;
 
 pub(crate) fn handle_gallery_key(app: &mut AppState, key: KeyEvent) {

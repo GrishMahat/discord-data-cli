@@ -1,17 +1,16 @@
 // The brain center of the operation. Keeps track of everything so you don't have to.
 
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::{
+    env, fs,
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool, mpsc::Receiver},
     time::Instant,
-    fs,
-    env,
 };
-use serde::{Deserialize, Serialize};
-use anyhow::{Context, Result};
 
 use crate::{analyzer, config::AppConfig, data};
-pub(crate) use data::{ActivityEventPreview, SupportTicketView, ChannelKind};
+pub(crate) use data::{ActivityEventPreview, ChannelKind, SupportTicketView};
 
 pub(crate) mod events;
 pub(crate) mod state;
@@ -29,8 +28,8 @@ pub(crate) struct InteractiveSettings {
 impl Default for InteractiveSettings {
     fn default() -> Self {
         Self {
-            download_attachments: false,  // By default, don't download that embarrassing video
-            preview_messages: 40,          // Show 40 messages of shame per channel
+            download_attachments: false, // By default, don't download that embarrassing video
+            preview_messages: 40,        // Show 40 messages of shame per channel
         }
     }
 }
@@ -49,10 +48,10 @@ impl ChannelFilter {
     pub(crate) fn label(self) -> &'static str {
         match self {
             ChannelFilter::All => "All",
-            ChannelFilter::Dm => "DMs",  // Where you said things you'd never say in public
+            ChannelFilter::Dm => "DMs", // Where you said things you'd never say in public
             ChannelFilter::GroupDm => "Group DMs",
-            ChannelFilter::PublicThread => "Public Threads",  // Arguments for everyone to enjoy
-            ChannelFilter::Voice => "Voice",  // Your sleep-deprived ramblings
+            ChannelFilter::PublicThread => "Public Threads", // Arguments for everyone to enjoy
+            ChannelFilter::Voice => "Voice",                 // Your sleep-deprived ramblings
         }
     }
 }
@@ -88,9 +87,9 @@ pub(crate) enum ActivityFilterField {
 // In what order should your digital archaeology be presented?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ActivitySortMode {
-    Newest,     // What have you done recently?
-    Oldest,     // The good old days... or were they?
-    EventType,  // Let's group the cringe by category!
+    Newest,    // What have you done recently?
+    Oldest,    // The good old days... or were they?
+    EventType, // Let's group the cringe by category!
 }
 
 impl ActivitySortMode {
@@ -220,7 +219,9 @@ pub(crate) fn validate_path(path: &str) -> PathValidation {
     if discord_folders.is_empty() {
         PathValidation::ValidDir
     } else {
-        PathValidation::ValidExport { folders: discord_folders }
+        PathValidation::ValidExport {
+            folders: discord_folders,
+        }
     }
 }
 
@@ -228,8 +229,12 @@ pub(crate) fn validate_path(path: &str) -> PathValidation {
 /// Returns the list of recognized subfolders found.
 fn detect_discord_folders(dir: &std::path::Path) -> Vec<String> {
     let known = [
-        "messages", "servers", "activity", "account",
-        "programs", "README.txt",
+        "messages",
+        "servers",
+        "activity",
+        "account",
+        "programs",
+        "README.txt",
     ];
     let mut found = Vec::new();
     for name in known {
@@ -289,11 +294,7 @@ pub(crate) fn list_browse_entries(path: &str) -> Vec<BrowseEntry> {
         let mut regular_entries = Vec::new();
 
         for entry in dirs.iter().take(30) {
-            let name = entry
-                .file_name()
-                .to_str()
-                .unwrap_or("?")
-                .to_owned();
+            let name = entry.file_name().to_str().unwrap_or("?").to_owned();
             let is_export = !detect_discord_folders(&entry.path()).is_empty();
             let display_name = if is_export {
                 format!("⭐ {name}")
@@ -409,16 +410,23 @@ impl AppState {
             session = Some(parsed);
         }
 
-        let cwd = env::current_dir().with_context(|| "failed to read current directory".to_owned())?;
+        let cwd =
+            env::current_dir().with_context(|| "failed to read current directory".to_owned())?;
         let default_export = cwd.display().to_string();
 
         // Spawn a new app with default values. It's like a baby, but made of code.
         let mut app = Self {
-            config: session.as_ref().map(|s| s.config.clone()).unwrap_or_default(),
+            config: session
+                .as_ref()
+                .map(|s| s.config.clone())
+                .unwrap_or_default(),
             config_path: config_path.clone(),
             id: session.as_ref().map(|s| s.id.clone()).unwrap_or_default(),
             setup: SetupState::new(default_export),
-            settings: session.as_ref().map(|s| s.settings.clone()).unwrap_or_default(),
+            settings: session
+                .as_ref()
+                .map(|s| s.settings.clone())
+                .unwrap_or_default(),
             channel_cache: None,
             last_data: None,
             status: "Ready".to_owned(),
@@ -500,9 +508,18 @@ pub(crate) const HOME_MENU_ITEMS: [(&str, &str); 13] = [
     ("Analyze Now", "Run full analysis on your Discord export"),
     ("Overview", "View analysis summary and statistics"),
     ("Support Tickets", "Browse support tickets with details"),
-    ("Activity Explorer", "Browse detailed activity with advanced filters and sorting"),
-    ("Download Attachments", "Download media files from your messages"),
-    ("Gallery", "Browse and search through downloaded attachments"),
+    (
+        "Activity Explorer",
+        "Browse detailed activity with advanced filters and sorting",
+    ),
+    (
+        "Download Attachments",
+        "Download media files from your messages",
+    ),
+    (
+        "Gallery",
+        "Browse and search through downloaded attachments",
+    ),
     ("Messages (All)", "Browse all message channels"),
     ("DMs", "Browse direct message channels"),
     ("Group DMs", "Browse group direct messages"),
