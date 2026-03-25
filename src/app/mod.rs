@@ -132,6 +132,31 @@ pub(crate) enum SetupStep {
     Confirm,
 }
 
+// A single entry visible in the folder browser panel.
+#[derive(Debug, Clone)]
+pub(crate) struct BrowseEntry {
+    pub(crate) name: String,
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) is_dir: bool,
+    /// True if this folder looks like a Discord data export.
+    pub(crate) is_discord_export: bool,
+}
+
+/// Real-time validation result for the current input path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PathValidation {
+    /// Path is empty
+    Empty,
+    /// Path exists and is a directory
+    ValidDir,
+    /// Path is a valid Discord export directory
+    ValidExport { folders: Vec<String> },
+    /// Path doesn't exist
+    NotFound,
+    /// Path exists but is a file, not a directory
+    NotADir,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct SetupState {
     pub(crate) step: SetupStep,
@@ -140,20 +165,158 @@ pub(crate) struct SetupState {
     pub(crate) results_path: String,
     pub(crate) profile_id: String,
     pub(crate) notice: String,
+    /// Entries shown in the inline folder browser.
+    pub(crate) browse_entries: Vec<BrowseEntry>,
+    /// Currently highlighted entry in the folder browser.
+    pub(crate) browse_cursor: usize,
+    /// Whether focus is on the browse panel (true) or the text input (false).
+    pub(crate) browse_focus: bool,
+    /// Real-time validation of the current input path.
+    pub(crate) path_validation: PathValidation,
+    /// Scroll offset for browse list (for long lists).
+    pub(crate) browse_scroll: usize,
 }
 
 impl SetupState {
     fn new(default_export: String) -> Self {
-        // First date with the app: show us where your Discord lives.
+        let entries = list_browse_entries(&default_export);
+        let validation = validate_path(&default_export);
         Self {
             step: SetupStep::ExportPath,
             input: default_export.clone(),
             export_path: default_export,
             results_path: String::new(),
             profile_id: String::new(),
-            notice: "Step 1/4: paste Discord export path, then press Enter.".to_owned(),
+            notice: String::new(),
+            browse_entries: entries,
+            browse_cursor: 0,
+            browse_focus: false,
+            path_validation: validation,
+            browse_scroll: 0,
         }
     }
+}
+
+/// Validate a path and detect whether it's a Discord export.
+pub(crate) fn validate_path(path: &str) -> PathValidation {
+    use std::path::PathBuf;
+
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return PathValidation::Empty;
+    }
+
+    let p = PathBuf::from(trimmed);
+    if !p.exists() {
+        return PathValidation::NotFound;
+    }
+    if !p.is_dir() {
+        return PathValidation::NotADir;
+    }
+
+    // Check for Discord export markers
+    let discord_folders = detect_discord_folders(&p);
+    if discord_folders.is_empty() {
+        PathValidation::ValidDir
+    } else {
+        PathValidation::ValidExport { folders: discord_folders }
+    }
+}
+
+/// Check if a directory looks like a Discord data export.
+/// Returns the list of recognized subfolders found.
+fn detect_discord_folders(dir: &std::path::Path) -> Vec<String> {
+    let known = [
+        "messages", "servers", "activity", "account",
+        "programs", "README.txt",
+    ];
+    let mut found = Vec::new();
+    for name in known {
+        if dir.join(name).exists() {
+            found.push(name.to_owned());
+        }
+    }
+    found
+}
+
+/// List subdirectories (and parent) of the directory at `path` for the browse panel.
+/// Marks directories that look like Discord exports.
+pub(crate) fn list_browse_entries(path: &str) -> Vec<BrowseEntry> {
+    use std::path::PathBuf;
+
+    let dir = PathBuf::from(path.trim());
+    let target = if dir.is_dir() {
+        dir.clone()
+    } else if let Some(parent) = dir.parent() {
+        if parent.is_dir() {
+            parent.to_path_buf()
+        } else {
+            return Vec::new();
+        }
+    } else {
+        return Vec::new();
+    };
+
+    let mut entries = Vec::new();
+
+    // Parent directory entry (".. (up)")
+    if let Some(parent) = target.parent() {
+        entries.push(BrowseEntry {
+            name: "⬆  ..".to_owned(),
+            path: parent.to_path_buf(),
+            is_dir: true,
+            is_discord_export: false,
+        });
+    }
+
+    // Read directory contents — directories only, sorted with Discord exports first
+    if let Ok(read) = std::fs::read_dir(&target) {
+        let mut dirs: Vec<_> = read
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|n| !n.starts_with('.'))
+                    .unwrap_or(false)
+            })
+            .collect();
+        dirs.sort_by_key(|e| e.file_name());
+
+        // Separate Discord exports from regular folders (exports come first)
+        let mut export_entries = Vec::new();
+        let mut regular_entries = Vec::new();
+
+        for entry in dirs.iter().take(30) {
+            let name = entry
+                .file_name()
+                .to_str()
+                .unwrap_or("?")
+                .to_owned();
+            let is_export = !detect_discord_folders(&entry.path()).is_empty();
+            let display_name = if is_export {
+                format!("⭐ {name}")
+            } else {
+                format!("📁 {name}")
+            };
+            let browse = BrowseEntry {
+                name: display_name,
+                path: entry.path(),
+                is_dir: true,
+                is_discord_export: is_export,
+            };
+            if is_export {
+                export_entries.push(browse);
+            } else {
+                regular_entries.push(browse);
+            }
+        }
+
+        entries.extend(export_entries);
+        entries.extend(regular_entries);
+    }
+
+    entries
 }
 
 // What the config file looks like on disk. Spoiler: it's TOML.

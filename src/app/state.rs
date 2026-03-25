@@ -244,7 +244,12 @@ fn open_setup_with_current_values(app: &mut AppState) {
     app.setup.profile_id = app.id.clone();
     app.setup.step = SetupStep::ExportPath;
     app.setup.input = app.setup.export_path.clone();
-    app.setup.notice = "Step 1/4: edit export path and press Enter.".to_owned();
+    app.setup.notice = String::new();
+    app.setup.browse_entries = list_browse_entries(&app.setup.input);
+    app.setup.browse_cursor = 0;
+    app.setup.browse_focus = false;
+    app.setup.path_validation = validate_path(&app.setup.input);
+    app.setup.browse_scroll = 0;
     app.screen = Screen::Setup;
 }
 
