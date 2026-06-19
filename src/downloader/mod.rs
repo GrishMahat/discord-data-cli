@@ -3,7 +3,10 @@ use std::{
     collections::HashSet,
     fs,
     path::Path,
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex, mpsc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::Duration,
 };
@@ -19,6 +22,7 @@ pub struct DownloadProgress {
 pub fn download_attachments<F>(
     results_dir: &Path,
     links: Vec<String>,
+    abort: Arc<AtomicBool>,
     mut on_progress: F,
 ) -> Result<()>
 where
@@ -108,9 +112,13 @@ where
         let failed = failed.clone();
         let hash_index = hash_index.clone();
         let in_flight_hashes = in_flight_hashes.clone();
+        let abort = Arc::clone(&abort);
 
         thread::spawn(move || {
             loop {
+                if abort.load(Ordering::SeqCst) {
+                    break;
+                }
                 let task = {
                     let mut q = queue.lock().unwrap();
                     q.pop()
@@ -244,8 +252,17 @@ where
 
     drop(tx);
     let mut completed = 0;
-    while let Ok(()) = rx.recv() {
-        completed += 1;
+    while completed < total {
+        if abort.load(Ordering::SeqCst) {
+            break;
+        }
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(()) => {
+                completed += 1;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
         let d = *downloaded.lock().unwrap();
         let s = *skipped.lock().unwrap();
         let dc = *duplicate_content.lock().unwrap();

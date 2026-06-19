@@ -17,21 +17,29 @@ pub(crate) fn draw_channels(frame: &mut ratatui::Frame<'_>, app: &AppState, area
     );
 
     if channels.is_empty() {
+        let (msg, note) = if app.channel_loading {
+            (
+                "  Loading channels...",
+                "This may take a moment for large exports.",
+            )
+        } else {
+            (
+                "  No channels match this filter.",
+                filter_tabs,
+            )
+        };
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
-                Line::styled(
-                    "  No channels match this filter.",
-                    Style::default().fg(Color::DarkGray),
-                ),
+                Line::styled(msg, Style::default().fg(Color::Cyan)),
                 Line::from(""),
-                Line::styled(filter_tabs, Style::default().fg(Color::DarkGray)),
+                Line::styled(note, Style::default().fg(Color::DarkGray)),
             ])
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title(format!(
-                        " Channels: {} [No matches] ",
+                        " Channels: {} ",
                         app.current_filter.label()
                     ))
                     .border_style(Style::default().fg(Color::Cyan)),

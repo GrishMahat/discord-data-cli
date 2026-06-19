@@ -45,7 +45,11 @@ pub(crate) fn draw_header(frame: &mut ratatui::Frame<'_>, app: &AppState, area: 
     let current_section = match app.screen {
         Screen::Home => "Dashboard",
         Screen::Overview => "Overview",
-        Screen::SupportActivity | Screen::SupportTicketDetail => "Support",
+        Screen::SupportActivity | Screen::SupportTicketDetail => match app.support_activity_tab {
+            crate::app::SupportActivityTab::Activity => "Activity",
+            crate::app::SupportActivityTab::Search => "Support & Activity",
+            _ => "Support",
+        },
         Screen::Activity | Screen::ActivityDetail => "Activity",
         Screen::ChannelList | Screen::MessageView => "Channels",
         Screen::Gallery => "Gallery",
@@ -172,7 +176,7 @@ pub(crate) fn draw_sidebar_nav(frame: &mut ratatui::Frame<'_>, app: &AppState, a
         ),
         ("Quit", None, Some(12), "Press Enter to quit"),
     ];
-    let active = tab_group_screen(app.screen);
+    let active = active_sidebar_screen(app);
     let mut items = Vec::with_capacity(nav.len());
     let mut selected_idx = 0usize;
 
@@ -246,9 +250,12 @@ pub(crate) fn draw_sidebar_nav(frame: &mut ratatui::Frame<'_>, app: &AppState, a
     );
 }
 
-fn tab_group_screen(screen: Screen) -> Screen {
-    match screen {
-        Screen::SupportTicketDetail => Screen::SupportActivity,
+fn active_sidebar_screen(app: &AppState) -> Screen {
+    match app.screen {
+        Screen::SupportTicketDetail | Screen::SupportActivity => match app.support_activity_tab {
+            crate::app::SupportActivityTab::Activity => Screen::Activity,
+            _ => Screen::SupportActivity,
+        },
         Screen::ActivityDetail => Screen::Activity,
         Screen::MessageView => Screen::ChannelList,
         other => other,

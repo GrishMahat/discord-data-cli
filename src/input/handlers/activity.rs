@@ -105,7 +105,8 @@ pub(crate) fn handle_activity_detail_key(app: &mut AppState, key: KeyEvent) {
             app.activity_detail_scroll = (app.activity_detail_scroll + 15).min(max_scroll);
         }
         KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
-            app.screen = Screen::Activity;
+            app.support_activity_tab = crate::app::SupportActivityTab::Activity;
+            app.screen = Screen::SupportActivity;
         }
         _ => {}
     }

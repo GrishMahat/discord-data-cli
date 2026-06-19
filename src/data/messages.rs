@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -44,9 +45,13 @@ impl ChannelKind {
     }
 }
 
+/// Load channels, optionally using cached data from a previous analysis run.
+/// `cached` maps directory name -> (message_count, channel_title, channel_type_str).
+/// Channels found in the cache skip expensive file reads.
 pub(crate) fn load_channels(
     package_dir: &Path,
     source_aliases: &SourceAliases,
+    cached: &BTreeMap<String, (u64, String, String)>,
 ) -> Result<Vec<MessageChannel>> {
     let Some(messages_dir) = resolve_optional_subdir(package_dir, &source_aliases.messages)? else {
         return Ok(Vec::new());
@@ -62,12 +67,29 @@ pub(crate) fn load_channels(
             continue;
         }
 
-        let channel_json_path = channel_dir.join("channel.json");
+        let dir_name = channel_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_owned();
+
+        if let Some((count, title, type_str)) = cached.get(&dir_name) {
+            channels.push(MessageChannel {
+                id: dir_name,
+                title: title.clone(),
+                kind: detect_channel_kind_str(type_str),
+                message_count: *count as usize,
+                messages_path: channel_dir.join("messages.json"),
+            });
+            continue;
+        }
+
         let messages_path = channel_dir.join("messages.json");
         if !messages_path.exists() {
             continue;
         }
 
+        let channel_json_path = channel_dir.join("channel.json");
         let channel_json = if channel_json_path.exists() {
             read_json_value(&channel_json_path).ok()
         } else {
@@ -78,13 +100,7 @@ pub(crate) fn load_channels(
             .as_ref()
             .and_then(|v| v.get("id"))
             .and_then(value_to_plain_string)
-            .unwrap_or_else(|| {
-                channel_dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_owned()
-            });
+            .unwrap_or_else(|| dir_name);
 
         let title = channel_title(channel_json.as_ref(), &id);
         let kind = detect_channel_kind(channel_json.as_ref());

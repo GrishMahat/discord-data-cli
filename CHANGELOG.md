@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - **Modular UI Screens**: Extracted all screen rendering functions from monolithic `render.rs` into dedicated modules (`overview.rs`, `channel_list.rs`, `messages.rs`, `support.rs`, `activity.rs`, `settings.rs`, `download.rs`) for improved maintainability and code organization.
 
 ### Features
+- **Terminal Image Viewer**: Pressing Enter on an image file in the Gallery now renders it directly in the terminal via iTerm/Sixel graphics protocol (viuer). Non-image files still open with the OS default app. Falls back to `open::that()` when terminal image support is unavailable.
 - **Analysis Abort Support**: Added cancellation capability to the analysis engine. Analysis now accepts an atomic abort flag that can be triggered to stop long-running operations.
 - **Step-Resolved Progress**: Enhanced progress tracking with a dedicated `AnalysisStep` enum to provide more granular status updates during analysis phases.
 - **Back Navigation from Processing**: Added 'b' key binding to navigate back from Analyzing and Downloading screens without waiting for completion.

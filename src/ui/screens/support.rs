@@ -1,16 +1,64 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 
 use crate::{
-    app::AppState,
+    app::{AppState, SupportActivityTab},
     data::{SupportTicketView, utils::truncate_text},
+    ui::screens::activity::draw_activity_tabbed,
 };
 
 pub(crate) fn draw_support_activity(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(1)])
+        .split(area);
+    draw_support_activity_tabs(frame, app, rows[0]);
+
+    match app.support_activity_tab {
+        SupportActivityTab::Support => draw_support_tabbed(frame, app, rows[1]),
+        SupportActivityTab::Activity => draw_activity_tabbed(frame, app, rows[1]),
+        SupportActivityTab::Search => draw_support_search_tab(frame, app, rows[1]),
+    }
+}
+
+fn draw_support_activity_tabs(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
+    let tabs = [
+        SupportActivityTab::Support,
+        SupportActivityTab::Activity,
+        SupportActivityTab::Search,
+    ];
+    let mut spans = Vec::new();
+    for (idx, tab) in tabs.iter().enumerate() {
+        let active = *tab == app.support_activity_tab;
+        let style = if active {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        spans.push(Span::styled(format!(" {} ", tab.label()), style));
+        if idx + 1 < tabs.len() {
+            spans.push(Span::raw("  "));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Tabs ")
+                .border_style(Style::default().fg(Color::DarkGray)),
+        ),
+        area,
+    );
+}
+
+fn draw_support_tabbed(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let tickets: &[SupportTicketView] = app.support_tickets.as_deref().unwrap_or(&[]);
     if tickets.is_empty() {
         let message = if app.support_activity_loading {
@@ -28,7 +76,7 @@ pub(crate) fn draw_support_activity(frame: &mut ratatui::Frame<'_>, app: &AppSta
                     Style::default().fg(Color::DarkGray),
                 ),
                 Line::styled(
-                    "  Browse with ↑/↓, press Enter to open a ticket.",
+                    "  Press 2 to switch to Activity.",
                     Style::default().fg(Color::DarkGray),
                 ),
             ])
@@ -43,6 +91,20 @@ pub(crate) fn draw_support_activity(frame: &mut ratatui::Frame<'_>, app: &AppSta
         return;
     }
 
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area);
+    draw_support_ticket_list(frame, app, tickets, cols[0]);
+    draw_support_ticket_preview(frame, app, tickets, cols[1]);
+}
+
+fn draw_support_ticket_list(
+    frame: &mut ratatui::Frame<'_>,
+    app: &AppState,
+    tickets: &[SupportTicketView],
+    area: Rect,
+) {
     let visible_rows = area.height.saturating_sub(2) as usize;
     let page_size = visible_rows.max(1);
     let start = app
@@ -55,9 +117,9 @@ pub(crate) fn draw_support_activity(frame: &mut ratatui::Frame<'_>, app: &AppSta
     for (local_idx, ticket) in tickets[start..end].iter().enumerate() {
         let idx = start + local_idx + 1;
         let row = format!(
-            "{idx:>4}  [{:<10}] {:<40}  {:<8}  c:{}",
+            "{idx:>4}  [{:<10}] {:<36}  {:<8}  c:{}",
             truncate_text(&ticket.status, 10),
-            truncate_text(&ticket.subject, 40),
+            truncate_text(&ticket.subject, 36),
             truncate_text(&ticket.priority, 8),
             ticket.comment_count
         );
@@ -72,7 +134,7 @@ pub(crate) fn draw_support_activity(frame: &mut ratatui::Frame<'_>, app: &AppSta
             Block::default()
                 .borders(Borders::ALL)
                 .title(format!(
-                    " Support Tickets: {} [↑↓ Select, Enter View] ",
+                    " Support Tickets: {} [↑↓ Select, Enter Detail] ",
                     tickets.len()
                 ))
                 .border_style(Style::default().fg(Color::Cyan)),
@@ -88,6 +150,95 @@ pub(crate) fn draw_support_activity(frame: &mut ratatui::Frame<'_>, app: &AppSta
     let mut state = ListState::default();
     state.select(Some(app.support_ticket_cursor.saturating_sub(start)));
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn draw_support_ticket_preview(
+    frame: &mut ratatui::Frame<'_>,
+    app: &AppState,
+    tickets: &[SupportTicketView],
+    area: Rect,
+) {
+    let ticket = tickets.get(app.support_ticket_cursor);
+    let mut lines = Vec::new();
+    if let Some(ticket) = ticket {
+        lines.push(Line::styled(
+            " Ticket Details",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        lines.push(Line::styled(
+            format!(" Subject: {}", truncate_text(&ticket.subject, 80)),
+            Style::default().fg(Color::White),
+        ));
+        lines.push(Line::styled(
+            format!(" Status: {}", ticket.status),
+            Style::default().fg(Color::Gray),
+        ));
+        lines.push(Line::styled(
+            format!(" Priority: {}", ticket.priority),
+            Style::default().fg(Color::Gray),
+        ));
+        lines.push(Line::styled(
+            format!(" Created: {}", ticket.created_at),
+            Style::default().fg(Color::DarkGray),
+        ));
+        lines.push(Line::styled(
+            format!(" Updated: {}", ticket.updated_at),
+            Style::default().fg(Color::DarkGray),
+        ));
+        lines.push(Line::from(""));
+        lines.push(Line::styled(
+            " Preview",
+            Style::default().fg(Color::DarkGray),
+        ));
+        for line in ticket.detail_lines.iter().take(10) {
+            lines.push(Line::styled(
+                format!(" {}", truncate_text(line, 96)),
+                Style::default().fg(Color::Gray),
+            ));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::styled(
+            " Enter to open full ticket view.",
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else {
+        lines.push(Line::from("No support ticket selected."));
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Ticket Detail ")
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            )
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+fn draw_support_search_tab(frame: &mut ratatui::Frame<'_>, _app: &AppState, area: Rect) {
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(""),
+            Line::styled("  Search is coming soon.", Style::default().fg(Color::Cyan)),
+            Line::from(""),
+            Line::styled(
+                "  Use Support or Activity tabs for now.",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search ")
+                .border_style(Style::default().fg(Color::DarkGray)),
+        ),
+        area,
+    );
 }
 
 pub(crate) fn draw_support_ticket_detail(

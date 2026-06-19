@@ -119,6 +119,7 @@ fn run_tui(app: &mut AppState) -> Result<()> {
         app::poll_download(app);
         app::poll_support_activity(app);
         app::poll_gallery(app);
+        app::poll_channels(app);
 
         terminal
             .draw(|frame| ui::draw_ui(frame, app))

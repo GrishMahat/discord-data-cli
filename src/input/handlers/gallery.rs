@@ -1,5 +1,10 @@
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::{
+    event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use std::io::{stdout, Write};
 
 use crate::app::{AppState, Screen, filtered_gallery_files, switch_gallery_filter};
 use crate::input::rect_contains;
@@ -43,7 +48,9 @@ pub(crate) fn handle_gallery_key(app: &mut AppState, key: KeyEvent) {
         KeyCode::Enter => {
             if count > 0 && app.gallery.cursor < count {
                 let file = &files[app.gallery.cursor];
-                if let Err(e) = open::that(&file._path) {
+                if file.category == "imgs" {
+                    view_image_in_terminal(&file._path);
+                } else if let Err(e) = open::that(&file._path) {
                     app.error = Some(format!("Failed to open file: {}", e));
                 } else {
                     app.status = format!("Opened: {}", file.name);
@@ -55,6 +62,46 @@ pub(crate) fn handle_gallery_key(app: &mut AppState, key: KeyEvent) {
         }
         _ => {}
     }
+}
+
+fn view_image_in_terminal(path: &std::path::Path) {
+    let img = match image::open(path) {
+        Ok(img) => img,
+        Err(_) => {
+            let _ = open::that(path);
+            return;
+        }
+    };
+
+    let term_supports = viuer::is_iterm_supported();
+    if !term_supports {
+        let _ = open::that(path);
+        return;
+    }
+
+    let _ = disable_raw_mode();
+    let _ = execute!(stdout(), LeaveAlternateScreen);
+
+    let result = viuer::print(
+        &img,
+        &viuer::Config {
+            x: 2,
+            y: 1,
+            width: None,
+            height: None,
+            absolute_offset: false,
+            ..Default::default()
+        },
+    );
+
+    if result.is_ok() {
+        let _ = write!(stdout(), "\n\n  Press any key to close the image viewer...");
+        let _ = stdout().flush();
+        let _ = crossterm::event::read();
+    }
+
+    let _ = execute!(stdout(), EnterAlternateScreen);
+    let _ = enable_raw_mode();
 }
 
 pub(crate) fn handle_gallery_mouse(app: &mut AppState, mouse: MouseEvent, area: Rect) {
@@ -70,7 +117,6 @@ pub(crate) fn handle_gallery_mouse(app: &mut AppState, mouse: MouseEvent, area: 
         MouseEventKind::Down(MouseButton::Left) => {
             if rect_contains(chunks[0], mouse.column, mouse.row) && chunks[0].width > 0 {
                 let rel_x = mouse.column.saturating_sub(chunks[0].x) as usize;
-                // Roughly 9 categories, spaced
                 let idx = (rel_x * 9) / chunks[0].width as usize;
                 let categories = [
                     None,

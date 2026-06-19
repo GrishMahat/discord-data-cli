@@ -48,6 +48,11 @@ pub(crate) fn draw_downloading(frame: &mut ratatui::Frame<'_>, app: &AppState) {
             format!("    {}", app.status),
             Style::default().fg(Color::Gray),
         ),
+        Line::from(""),
+        Line::styled(
+            "    [C] Cancel  [R] Run in Background",
+            Style::default().fg(Color::DarkGray),
+        ),
     ];
     frame.render_widget(
         Paragraph::new(text_lines).wrap(Wrap { trim: true }),

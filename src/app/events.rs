@@ -1,4 +1,4 @@
-use super::AttachmentFile;
+use super::{AttachmentFile, MessageChannel};
 use crate::{analyzer, data::SupportTicketView, data::activity::ActivityEventPreview, downloader};
 use std::result::Result;
 
@@ -14,6 +14,10 @@ pub(crate) enum SupportActivityEvent {
 
 pub(crate) enum GalleryEvent {
     Finished(Result<Vec<AttachmentFile>, String>),
+}
+
+pub(crate) enum ChannelEvent {
+    Finished(Result<Vec<MessageChannel>, String>),
 }
 
 pub(crate) enum DownloadEvent {

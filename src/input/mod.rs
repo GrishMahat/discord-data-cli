@@ -155,13 +155,28 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
         return Ok(());
     }
 
-    if app.screen == Screen::Analyzing || app.screen == Screen::Downloading {
+    if app.screen == Screen::Analyzing {
         match key.code {
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 app.screen = Screen::Home;
+                app.sidebar_cursor = None;
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 crate::app::cancel_analysis(app);
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
+    if app.screen == Screen::Downloading {
+        match key.code {
+            KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Char('c') | KeyCode::Char('C') => {
+                if matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C')) {
+                    crate::app::cancel_download(app);
+                }
+                app.screen = Screen::Home;
+                app.sidebar_cursor = None;
             }
             _ => {}
         }
@@ -255,9 +270,9 @@ fn cycle_sidebar_row(app: &AppState, reverse: bool) -> usize {
     let rows = [0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     // Use sidebar_cursor if set (action rows don't change the screen),
     // otherwise derive from current screen.
-    let current = app
-        .sidebar_cursor
-        .unwrap_or_else(|| sidebar_row_for_screen(app.screen));
+        let current = app
+            .sidebar_cursor
+            .unwrap_or_else(|| sidebar_row_for_screen(app));
     let current_idx = rows.iter().position(|r| *r == current).unwrap_or(0);
     let len = rows.len();
     let next_idx = if reverse {
@@ -280,9 +295,14 @@ fn cycle_sidebar_row(app: &AppState, reverse: bool) -> usize {
     0
 }
 
-fn sidebar_row_for_screen(screen: Screen) -> usize {
-    match screen {
-        Screen::SupportTicketDetail | Screen::SupportActivity => 3,
+fn sidebar_row_for_screen(app: &AppState) -> usize {
+    match app.screen {
+        Screen::SupportTicketDetail | Screen::SupportActivity => {
+            match app.support_activity_tab {
+                crate::app::SupportActivityTab::Activity => 4,
+                _ => 3,
+            }
+        }
         Screen::ActivityDetail | Screen::Activity => 4,
         Screen::MessageView | Screen::ChannelList => 5,
         Screen::Gallery => 6,

@@ -10,7 +10,9 @@ use std::{
 };
 
 use crate::{analyzer, config::AppConfig, data};
-pub(crate) use data::{ActivityEventPreview, ChannelKind, SupportTicketView};
+pub(crate) use data::{
+    ActivityEventPreview, ChannelKind, MessageChannel, SupportTicketView,
+};
 
 pub(crate) mod events;
 pub(crate) mod state;
@@ -72,6 +74,39 @@ pub(crate) enum Screen {
     Analyzing,
     Downloading,
     Gallery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SupportActivityTab {
+    Support,
+    Activity,
+    Search,
+}
+
+impl SupportActivityTab {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            SupportActivityTab::Support => "Support Tickets",
+            SupportActivityTab::Activity => "Activity Events",
+            SupportActivityTab::Search => "Search",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            SupportActivityTab::Support => SupportActivityTab::Activity,
+            SupportActivityTab::Activity => SupportActivityTab::Search,
+            SupportActivityTab::Search => SupportActivityTab::Support,
+        }
+    }
+
+    pub(crate) fn prev(self) -> Self {
+        match self {
+            SupportActivityTab::Support => SupportActivityTab::Search,
+            SupportActivityTab::Activity => SupportActivityTab::Support,
+            SupportActivityTab::Search => SupportActivityTab::Activity,
+        }
+    }
 }
 
 // For when you need to find THAT ONE MESSAGE from THREE YEARS AGO.
@@ -369,6 +404,7 @@ pub(crate) struct AppState {
     pub(crate) analysis_total_files: Option<u32>,
     pub(crate) download_progress: f32,
     pub(crate) download_running: bool,
+    pub(crate) download_abort: Arc<AtomicBool>,
     pub(crate) download_rx: Option<Receiver<DownloadEvent>>,
     pub(crate) screen: Screen,
     pub(crate) should_quit: bool,
@@ -384,6 +420,7 @@ pub(crate) struct AppState {
     pub(crate) support_tickets: Option<Vec<SupportTicketView>>,
     pub(crate) support_ticket_cursor: usize,
     pub(crate) support_ticket_scroll: usize,
+    pub(crate) support_activity_tab: SupportActivityTab,
     pub(crate) activity_events: Option<Vec<ActivityEventPreview>>,
     pub(crate) activity_cursor: usize,
     pub(crate) activity_filters: ActivityFilters,
@@ -395,6 +432,8 @@ pub(crate) struct AppState {
     pub(crate) support_activity_loading: bool,
     pub(crate) activity_loading: bool,
     pub(crate) support_activity_rx: Option<Receiver<SupportActivityEvent>>,
+    pub(crate) channel_loading: bool,
+    pub(crate) channel_rx: Option<Receiver<ChannelEvent>>,
     pub(crate) gallery_loading: bool,
     pub(crate) gallery_rx: Option<Receiver<GalleryEvent>>,
 }
@@ -442,6 +481,7 @@ impl AppState {
             analysis_total_files: None,
             download_progress: 0.0,
             download_running: false,
+            download_abort: Arc::new(AtomicBool::new(false)),
             download_rx: None,
             screen: Screen::Setup,
             should_quit: false,
@@ -457,6 +497,7 @@ impl AppState {
             support_tickets: None,
             support_ticket_cursor: 0,
             support_ticket_scroll: 0,
+            support_activity_tab: SupportActivityTab::Support,
             activity_events: None,
             activity_cursor: 0,
             activity_filters: ActivityFilters::default(),
@@ -473,6 +514,8 @@ impl AppState {
             support_activity_loading: false,
             activity_loading: false,
             support_activity_rx: None,
+            channel_loading: false,
+            channel_rx: None,
             gallery_loading: false,
             gallery_rx: None,
         };

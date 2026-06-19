@@ -125,8 +125,14 @@ pub(crate) fn screen_disabled_reason(app: &AppState, screen: Screen) -> Option<S
     let data = app.last_data.as_ref()?;
     match screen {
         Screen::Overview => None,
-        Screen::SupportActivity if !folder_available(data, "support_tickets") => {
-            Some("Support is disabled: source data was not included in this export.".to_owned())
+        Screen::SupportActivity
+            if !folder_available(data, "support_tickets")
+                && !folder_available(data, "activity") =>
+        {
+            Some(
+                "Support & Activity are disabled: source data was not included in this export."
+                    .to_owned(),
+            )
         }
         Screen::Activity if !folder_available(data, "activity") => {
             Some("Activity is disabled: source data was not included in this export.".to_owned())
@@ -257,14 +263,14 @@ fn open_setup_with_current_values(app: &mut AppState) {
 pub(crate) fn switch_filter(app: &mut AppState, filter: ChannelFilter) -> Result<()> {
     app.current_filter = filter;
     app.channel_cursor = 0;
-    ensure_channels_loaded(app)?;
+    ensure_channels_loaded(app);
     Ok(())
 }
 
 pub(crate) fn open_channel_filter(app: &mut AppState, filter: ChannelFilter) -> Result<()> {
     app.current_filter = filter;
     app.channel_cursor = 0;
-    ensure_channels_loaded(app)?;
+    ensure_channels_loaded(app);
     app.screen = Screen::ChannelList;
     Ok(())
 }
@@ -274,6 +280,7 @@ pub(crate) fn open_support_activity(app: &mut AppState) -> Result<()> {
     if app.support_tickets.is_none() {
         start_support_tickets_load(app);
     }
+    app.support_activity_tab = crate::app::SupportActivityTab::Support;
     app.screen = Screen::SupportActivity;
     Ok(())
 }
@@ -283,7 +290,8 @@ pub(crate) fn open_activity(app: &mut AppState) -> Result<()> {
     if app.activity_events.is_none() {
         start_activity_events_load(app);
     }
-    app.screen = Screen::Activity;
+    app.support_activity_tab = crate::app::SupportActivityTab::Activity;
+    app.screen = Screen::SupportActivity;
     Ok(())
 }
 
@@ -511,6 +519,13 @@ pub(crate) fn cancel_analysis(app: &mut AppState) {
     }
 }
 
+pub(crate) fn cancel_download(app: &mut AppState) {
+    if app.download_running {
+        app.download_abort.store(true, Ordering::SeqCst);
+        app.status = "Canceling download...".to_owned();
+    }
+}
+
 pub(crate) fn handle_download_attachments(app: &mut AppState) {
     if app.download_running {
         return;
@@ -530,15 +545,18 @@ pub(crate) fn handle_download_attachments(app: &mut AppState) {
 fn start_download(app: &mut AppState, links: Vec<String>) {
     app.download_running = true;
     app.download_progress = 0.0;
+    app.download_abort.store(false, Ordering::SeqCst);
     app.screen = Screen::Downloading;
     let (tx, rx) = mpsc::channel();
     let results_dir = app.config.results_path(&app.config_path, &app.id);
+    let abort = Arc::clone(&app.download_abort);
     thread::spawn(move || {
         let tx2 = tx.clone();
-        let result = downloader::download_attachments(&results_dir, links, move |p| {
-            let _ = tx2.send(DownloadEvent::Progress(p));
-        })
-        .map_err(|e| e.to_string());
+        let result =
+            downloader::download_attachments(&results_dir, links, abort, move |p| {
+                let _ = tx2.send(DownloadEvent::Progress(p));
+            })
+            .map_err(|e| e.to_string());
         let _ = tx.send(DownloadEvent::Finished(result));
     });
     app.download_rx = Some(rx);
@@ -555,8 +573,18 @@ pub(crate) fn poll_download(app: &mut AppState) {
                 }
                 Ok(DownloadEvent::Finished(_res)) => {
                     app.download_running = false;
-                    app.status = "Download complete.".to_owned();
-                    app.screen = Screen::Overview;
+                    if app.download_abort.load(Ordering::SeqCst) {
+                        app.status = "Download canceled.".to_owned();
+                    } else {
+                        app.status = "Download complete.".to_owned();
+                    }
+                    if app.screen == Screen::Downloading {
+                        app.screen = if app.download_abort.load(Ordering::SeqCst) {
+                            Screen::Home
+                        } else {
+                            Screen::Overview
+                        };
+                    }
                     finished = true;
                     break;
                 }
@@ -623,14 +651,55 @@ pub(crate) fn filtered_channels(app: &AppState) -> Vec<&data::MessageChannel> {
         .unwrap_or_default()
 }
 
-pub(crate) fn ensure_channels_loaded(app: &mut AppState) -> Result<()> {
-    if app.channel_cache.is_some() {
-        return Ok(());
+pub(crate) fn ensure_channels_loaded(app: &mut AppState) {
+    if app.channel_cache.is_some() || app.channel_loading {
+        return;
     }
+    app.channel_loading = true;
+    app.status = "Loading channels...".to_owned();
+    let (tx, rx) = mpsc::channel();
     let package_dir = app.config.package_path(&app.config_path, &app.id);
-    let channels = data::load_channels(&package_dir, &app.config.source_aliases)?;
-    app.channel_cache = Some(channels);
-    Ok(())
+    let aliases = app.config.source_aliases.clone();
+    let cached_counts: BTreeMap<String, (u64, String, String)> = app
+        .last_data
+        .as_ref()
+        .map(|data| {
+            data.channels_cache
+                .iter()
+                .map(|(id, c)| {
+                    (id.clone(), (c.message_count, c.channel_title.clone(), c.channel_type.clone()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    thread::spawn(move || {
+        let result = data::load_channels(&package_dir, &aliases, &cached_counts)
+            .map_err(|e| e.to_string());
+        let _ = tx.send(ChannelEvent::Finished(result));
+    });
+    app.channel_rx = Some(rx);
+}
+
+pub(crate) fn poll_channels(app: &mut AppState) {
+    if let Some(rx) = &app.channel_rx {
+        match rx.try_recv() {
+            Ok(ChannelEvent::Finished(Ok(channels))) => {
+                app.channel_loading = false;
+                app.channel_cache = Some(channels);
+                app.channel_rx = None;
+            }
+            Ok(ChannelEvent::Finished(Err(e))) => {
+                app.channel_loading = false;
+                app.status = format!("Failed to load channels: {}", e);
+                app.channel_rx = None;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                app.channel_loading = false;
+                app.channel_rx = None;
+            }
+        }
+    }
 }
 
 pub(crate) fn try_load_existing_data(app: &mut AppState) {
@@ -648,6 +717,9 @@ pub(crate) fn key_help(screen: Screen) -> &'static str {
         Screen::Setup => "Enter: Next, Esc: Quit",
         Screen::Home => "Arrows: Select, Enter: Open, Q: Quit",
         Screen::Overview => "R: Refresh, B: Back",
+        Screen::SupportActivity => "1-3: Tabs, ↑↓: Navigate, Enter: Detail, R: Refresh, B: Back",
+        Screen::SupportTicketDetail => "↑↓: Scroll, B: Back",
+        Screen::ActivityDetail => "↑↓: Scroll, B: Back",
         Screen::ChannelList => "1-5: Filter, Enter: View, B: Back",
         _ => "B: Back, Q: Quit",
     }

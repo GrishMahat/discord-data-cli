@@ -11,6 +11,195 @@ use crate::{
     ui::components::stat_line,
 };
 
+pub(crate) fn draw_activity_tabbed(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
+    let all_event_count = app.activity_events.as_ref().map(|v| v.len()).unwrap_or(0);
+    let filtered = filtered_activity_events(app);
+    let filtered_count = filtered.len();
+    let event_cursor = app.activity_cursor.min(filtered_count.saturating_sub(1));
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(area);
+    let left_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(3)])
+        .split(cols[0]);
+
+    let edit_label = match app.activity_filter_edit {
+        Some(field) => format!("editing {}", filter_field_label(field)),
+        None => "edit off".to_owned(),
+    };
+    let filter_line = format!(
+        " q:{}  type:{}  src:{}  from:{}  to:{}  sort:{}  {}",
+        render_filter_value(&app.activity_filters.query),
+        render_filter_value(&app.activity_filters.event_type),
+        render_filter_value(&app.activity_filters.source_file),
+        render_filter_value(&app.activity_filters.from_date),
+        render_filter_value(&app.activity_filters.to_date),
+        app.activity_sort.label(),
+        edit_label,
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                "  Filters",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ),
+            Line::styled(format!("  {filter_line}"), Style::default().fg(Color::DarkGray)),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Filters ")
+                .border_style(Style::default().fg(Color::DarkGray)),
+        ),
+        left_rows[0],
+    );
+
+    if filtered.is_empty() {
+        let message = if app.activity_loading {
+            "  Loading logs..."
+        } else {
+            "  No activity events found."
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::styled(message, Style::default().fg(Color::Cyan)),
+                Line::styled(
+                    "  Use / t y [ ] to edit filters, o to change sort, c to clear.",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(
+                        " Activity Events ({}/{}) ",
+                        filtered_count, all_event_count
+                    ))
+                    .border_style(Style::default().fg(Color::Cyan)),
+            ),
+            left_rows[1],
+        );
+        frame.render_widget(
+            Paragraph::new("No activity event selected.")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Event Detail ")
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                )
+                .wrap(Wrap { trim: true }),
+            cols[1],
+        );
+        return;
+    }
+
+    let visible_rows = left_rows[1].height.saturating_sub(2) as usize;
+    let page_size = visible_rows.max(1);
+    let start = event_cursor
+        .saturating_sub(page_size / 2)
+        .min(filtered_count.saturating_sub(page_size));
+    let end = (start + page_size).min(filtered_count);
+
+    let mut items = Vec::with_capacity(end.saturating_sub(start));
+    for (local_idx, event) in filtered[start..end].iter().enumerate() {
+        let idx = start + local_idx + 1;
+        let summary = truncate_text(&event.summary, 54);
+        items.push(ListItem::new(Line::from(vec![
+            ratatui::text::Span::styled(format!("{idx:>4} "), Style::default().fg(Color::DarkGray)),
+            ratatui::text::Span::styled(
+                format!("[{}] ", truncate_text(&event.timestamp, 18)),
+                Style::default().fg(Color::Blue),
+            ),
+            ratatui::text::Span::styled(
+                format!("{:<14} ", truncate_text(&event.event_type, 14)),
+                Style::default().fg(Color::Cyan),
+            ),
+            ratatui::text::Span::styled(summary, Style::default().fg(Color::White)),
+        ])));
+    }
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(
+                    " Activity Events ({}/{}) [↑↓ Browse, Enter Detail] ",
+                    filtered_count, all_event_count
+                ))
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("");
+    let mut state = ListState::default();
+    state.select(Some(event_cursor.saturating_sub(start)));
+    frame.render_stateful_widget(list, left_rows[1], &mut state);
+
+    let event = filtered.get(event_cursor);
+    let mut detail_lines = Vec::new();
+    if let Some(event) = event {
+        detail_lines.push(Line::styled(
+            " Summary",
+            Style::default().fg(Color::DarkGray),
+        ));
+        detail_lines.push(Line::styled(
+            format!(" {}", truncate_text(&event.summary, 120)),
+            Style::default().fg(Color::White),
+        ));
+        detail_lines.push(Line::from(""));
+        detail_lines.push(Line::styled(
+            format!(" Timestamp: {}", event.timestamp),
+            Style::default().fg(Color::Blue),
+        ));
+        detail_lines.push(Line::styled(
+            format!(
+                " Type: {}   Source: {}",
+                truncate_text(&event.event_type, 24),
+                truncate_text(&event.source_file, 24)
+            ),
+            Style::default().fg(Color::Gray),
+        ));
+        detail_lines.push(Line::from(""));
+        detail_lines.push(Line::styled(
+            " Preview",
+            Style::default().fg(Color::DarkGray),
+        ));
+        for line in event.detail.lines().take(8) {
+            detail_lines.push(Line::styled(
+                format!(" {}", truncate_text(line, 120)),
+                Style::default().fg(Color::Gray),
+            ));
+        }
+        detail_lines.push(Line::from(""));
+        detail_lines.push(Line::styled(
+            " Enter to open full detail view.",
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else {
+        detail_lines.push(Line::from("No activity event selected."));
+    }
+
+    frame.render_widget(
+        Paragraph::new(detail_lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Event Detail ")
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            )
+            .wrap(Wrap { trim: true }),
+        cols[1],
+    );
+}
+
 pub(crate) fn draw_activity(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let all_event_count = app.activity_events.as_ref().map(|v| v.len()).unwrap_or(0);
     let filtered = filtered_activity_events(app);
