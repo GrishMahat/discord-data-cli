@@ -1,0 +1,21 @@
+[package]
+name = "discord-data-cli"
+version.workspace = true
+edition.workspace = true
+description = "Discord Data Analyzer — terminal UI"
+
+[[bin]]
+name = "discord-analyzer"
+path = "src/main.rs"
+
+[dependencies]
+discord-data-cli-core.workspace = true
+anyhow.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+open = "5.3.3"
+viuer = "0.11"
+image = "0.25.10"

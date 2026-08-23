@@ -1,0 +1,15 @@
+pub(crate) mod activity;
+pub(crate) mod activity_map;
+pub(crate) mod analyzing;
+pub(crate) mod channel_list;
+pub(crate) mod compare;
+pub(crate) mod download;
+pub(crate) mod gallery;
+pub(crate) mod home;
+pub(crate) mod insights;
+pub(crate) mod messages;
+pub(crate) mod overview;
+pub(crate) mod search;
+pub(crate) mod settings;
+pub(crate) mod setup;
+pub(crate) mod support;

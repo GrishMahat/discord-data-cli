@@ -441,23 +441,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "discord-data-analyzer-rs"
+name = "discord-data-cli"
 version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossterm",
- "emojis",
+ "discord-data-cli-core",
  "image",
  "open",
  "ratatui",
+ "serde",
+ "serde_json",
+ "toml",
+ "viuer",
+]
+
+[[package]]
+name = "discord-data-cli-core"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "emojis",
  "regex",
  "serde",
  "serde_json",
  "sha2",
- "toml",
  "unicode-segmentation",
  "ureq",
- "viuer",
  "walkdir",
 ]
 

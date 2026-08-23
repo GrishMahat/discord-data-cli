@@ -45,7 +45,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: cargo build --release --locked -p discord-data-cli --target ${{ matrix.target }}
 
       - name: Rename binary
         shell: bash
@@ -55,6 +55,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.asset }}
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

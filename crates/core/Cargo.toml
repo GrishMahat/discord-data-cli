@@ -1,0 +1,19 @@
+[package]
+name = "discord-data-cli-core"
+version.workspace = true
+edition.workspace = true
+description = "Core analysis engine for the Discord Data Analyzer (no UI)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+emojis = "0.6"
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+unicode-segmentation.workspace = true
+walkdir.workspace = true
+ureq.workspace = true
+sha2.workspace = true
