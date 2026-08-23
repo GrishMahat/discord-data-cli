@@ -31,6 +31,7 @@ All notable changes to this project will be documented in this file.
 - **Home Dashboard Polish**: Top Channels now render proportional bars; Quick Actions (`R` Re-analyze, `D` Download, `E` Export) are real working key bindings.
 - **Channel Sort Orders**: The channel browser can sort by most messages (default), name (A-Z), or most recently active — cycle with `O`. Counts render as activity-tier badges (bright for busy channels, ghosted for empty ones).
 - **Gallery Count Badges**: Every category tab shows its file count inline.
+- **Broader Terminal Image Support**: In-terminal image viewing now works beyond iTerm — Kitty, sixel, and plain Unicode half-block terminals all render directly, falling back to the OS opener only if rendering fails.
 
 ### Performance & Efficiency
 - **Single Deduplicated Telemetry Pass**: The four Activity subfolders (analytics/modeling/reporting/tns) contain overlapping copies of the same events (identical `event_id`). All aggregation now happens in one global pass with id-based deduplication (~1.4M duplicates skipped on the reference export), fixing ~4x inflated activity totals.
@@ -42,15 +43,6 @@ All notable changes to this project will be documented in this file.
 - Sidebar expanded to Dashboard / Analyze Now / Overview / Insights / Compare / Activity Map / Support / Activity / Search / Channels / Gallery / Download / Settings / Quit, with disabled-state reasons preserved.
 - Live preview pane shows a spinner while loading and pins to the live tail; `,` / `.` or mouse wheel page upward through history.
 - Status-bar help strings updated for every new screen.
-
-### Bug Fixes
-- **Support/Activity Reload Loop**: Both background loaders shared a single result channel, so starting one load right after the other orphaned the first worker's results forever — re-entering the screens respawned workers endlessly ("Loading…" forever). Each dataset now owns its channel, load failures are latched (with an inline error and manual `r` refresh to retry) instead of auto-respawning, and switching to the Activity tab triggers its load on demand.
-- **Crash on Analyze Now**: Starting an analysis from the menu crashed the whole TUI (`index out of bounds` on the step checklist) after the new Insights step made the checklist nine rows while the layout still allocated eight, and its per-step progress math still divided by the old step count. Layout rows are now derived from the checklist length, the card was enlarged to fit, and progress math scales with step count.
-- **Tab Behavior on Support & Activity**: Pressing Tab on the tabbed screen cycled the global sidebar instead of doing anything useful. Tab / Shift+Tab now switch the screen's own tabs (Support → Activity → Search) as users expect; sidebar navigation stays available via mouse and on other screens.
-- **Silent Key Handling Gaps**: Several screens were never added to the global Tab/Enter/`q` handler lists, so Tab-cycling and quit quietly did nothing past Insights. All 14 screens are now consistently wired.
-- **Search Snippet Unicode Drift**: Match highlighting sliced the original string using indices from a lowercased copy, which can change length ('İ', 'ﬀ'), causing misaligned highlights and potential panics. Matching is now done per-character 1:1 with clamped bounds.
-- **Duplicate Snapshots**: Re-running analysis unchanged created a new snapshot every time because the comparison included the run timestamp; snapshots are now compared by stats alone.
-- **Gallery Image Viewing on Non-iTerm Terminals**: In-terminal image rendering was gated behind iTerm protocol detection only, so Kitty/sixel/other terminals silently fell back to opening files externally. viuer now picks the best available backend automatically (Kitty → sixel → iTerm → Unicode half-blocks) and only falls back to the OS opener if rendering fails, with status feedback either way.
 
 ### Architecture & Under-the-hood
 - New modules: `src/insights/`, `src/compare/`, plus screens/handlers for search, insights, compare, and activity map.
