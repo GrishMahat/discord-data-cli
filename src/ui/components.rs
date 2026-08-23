@@ -45,12 +45,16 @@ pub(crate) fn draw_header(frame: &mut ratatui::Frame<'_>, app: &AppState, area: 
     let current_section = match app.screen {
         Screen::Home => "Dashboard",
         Screen::Overview => "Overview",
+        Screen::Insights => "Insights",
+        Screen::Compare => "Compare Exports",
+        Screen::ActivityMap => "Activity Map",
         Screen::SupportActivity | Screen::SupportTicketDetail => match app.support_activity_tab {
             crate::app::SupportActivityTab::Activity => "Activity",
             crate::app::SupportActivityTab::Search => "Support & Activity",
             _ => "Support",
         },
         Screen::Activity | Screen::ActivityDetail => "Activity",
+        Screen::Search => "Message Search",
         Screen::ChannelList | Screen::MessageView => "Channels",
         Screen::Gallery => "Gallery",
         Screen::Settings => "Settings",
@@ -139,6 +143,24 @@ pub(crate) fn draw_sidebar_nav(frame: &mut ratatui::Frame<'_>, app: &AppState, a
             "Press Enter to open overview",
         ),
         (
+            "Insights",
+            Some(Screen::Insights),
+            None,
+            "Billing, voice quality, devices, sessions and contacts",
+        ),
+        (
+            "Compare",
+            Some(Screen::Compare),
+            None,
+            "What changed since your previous export",
+        ),
+        (
+            "Activity Map",
+            Some(Screen::ActivityMap),
+            None,
+            "GitHub-style heatmap of daily messages",
+        ),
+        (
             "Support",
             Some(Screen::SupportActivity),
             Some(2),
@@ -149,6 +171,12 @@ pub(crate) fn draw_sidebar_nav(frame: &mut ratatui::Frame<'_>, app: &AppState, a
             Some(Screen::Activity),
             Some(3),
             "Press Enter to open activity",
+        ),
+        (
+            "Search",
+            Some(Screen::Search),
+            None,
+            "Press Enter to search all messages",
         ),
         (
             "Channels",

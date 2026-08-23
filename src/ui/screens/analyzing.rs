@@ -17,7 +17,7 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
     );
     frame.render_widget(overlay, area);
 
-    let card = centered_rect(74, 64, area);
+    let card = centered_rect(74, 72, area);
     frame.render_widget(Clear, card);
 
     let block = Block::default().borders(Borders::ALL).border_style(
@@ -39,7 +39,7 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
-            Constraint::Length(10),
+            Constraint::Length(12),
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(0),
@@ -87,12 +87,13 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
         AnalysisStep::Activity => 6,
         AnalysisStep::Activities => 7,
         AnalysisStep::Programs => 8,
-        AnalysisStep::Writing => 9,
-        AnalysisStep::Complete => 9,
+        AnalysisStep::Insights => 9,
+        AnalysisStep::Writing => 10,
+        AnalysisStep::Complete => 10,
     };
     frame.render_widget(
         Paragraph::new(Line::styled(
-            format!("Step {} of 9: {}...", step_num, app.analysis_step.label()),
+            format!("Step {} of 10: {}...", step_num, app.analysis_step.label()),
             Style::default().fg(Color::White),
         ))
         .alignment(Alignment::Center),
@@ -123,6 +124,7 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
         (AnalysisStep::Activity, "Activity"),
         (AnalysisStep::Activities, "Activities"),
         (AnalysisStep::Programs, "Programs"),
+        (AnalysisStep::Insights, "Insights"),
         (AnalysisStep::Writing, "Writing"),
     ];
 
@@ -135,8 +137,9 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
         AnalysisStep::Activity => 4,
         AnalysisStep::Activities => 5,
         AnalysisStep::Programs => 6,
-        AnalysisStep::Writing => 7,
-        AnalysisStep::Complete => 8,
+        AnalysisStep::Insights => 7,
+        AnalysisStep::Writing => 8,
+        AnalysisStep::Complete => 9,
     };
 
     let mut checklist_lines = Vec::new();
@@ -157,8 +160,9 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
         };
 
         let progress_bar = if i == current_step_idx {
-            let step_start = (i + 1) as f32 / 9.0;
-            let step_end = (i + 2) as f32 / 9.0;
+            let total_steps = steps.len() as f32 + 1.0; // + Preparing
+            let step_start = (i + 1) as f32 / total_steps;
+            let step_end = (i + 2) as f32 / total_steps;
             let step_progress = if app.analysis_progress > step_start {
                 ((app.analysis_progress - step_start) / (step_end - step_start)).clamp(0.0, 1.0)
             } else {
@@ -213,7 +217,7 @@ pub(crate) fn draw_analyzing(frame: &mut ratatui::Frame<'_>, app: &AppState) {
 
     let checklist_layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(vec![Constraint::Length(1); 8])
+        .constraints(vec![Constraint::Length(1); checklist_lines.len().max(1)])
         .split(checklist_area);
 
     for (i, line) in checklist_lines.iter().enumerate() {

@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -287,6 +287,62 @@ pub(crate) fn channel_title(channel: Option<&Value>, fallback_id: &str) -> Strin
     }
 
     fallback_id.to_owned()
+}
+
+/// Stream records from a JSON array or NDJSON file without loading it all
+/// into memory. Calls `f` for every parsed record. Returns number of records seen.
+pub(crate) fn stream_records(path: &Path, f: &mut dyn FnMut(&Value)) -> Result<usize> {
+    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+
+    // Detect JSON array vs NDJSON by peeking the first non-whitespace byte.
+    let mut first_byte = [0u8; 1];
+    let is_json_array = loop {
+        match reader.read_exact(&mut first_byte) {
+            Ok(_) => {
+                if !first_byte[0].is_ascii_whitespace() {
+                    break first_byte[0] == b'[';
+                }
+            }
+            Err(_) => break false,
+        }
+    };
+    reader.seek(SeekFrom::Start(0))?;
+
+    let mut count = 0usize;
+    if is_json_array {
+        // The document itself may be a single array (pretty-printed exports)
+        // or a sequence of values; flatten arrays into individual records.
+        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<Value>();
+        for value in stream.flatten() {
+            match value {
+                Value::Array(items) => {
+                    for item in &items {
+                        f(item);
+                        count += 1;
+                    }
+                }
+                _ => {
+                    f(&value);
+                    count += 1;
+                }
+            }
+        }
+    } else {
+        for line in reader.lines() {
+            let line = line?;
+            let line = line.trim();
+            if line.is_empty() || line == "[" || line == "]" {
+                continue;
+            }
+            let clean = line.strip_suffix(',').unwrap_or(line);
+            if let Ok(value) = serde_json::from_str::<Value>(clean) {
+                f(&value);
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
 }
 
 pub(crate) fn read_records_tail(path: &Path, n: usize) -> Result<Vec<Value>> {

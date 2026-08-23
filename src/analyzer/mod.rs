@@ -28,6 +28,7 @@ pub enum AnalysisStep {
     Activity,
     Activities,
     Programs,
+    Insights,
     Writing,
     Complete,
 }
@@ -43,6 +44,7 @@ impl AnalysisStep {
             AnalysisStep::Activity => "Activity",     // What did you do, when?
             AnalysisStep::Activities => "Activities", // Programs. Games. Productivity.
             AnalysisStep::Programs => "Programs",
+            AnalysisStep::Insights => "Insights",     // Numbers with feelings
             AnalysisStep::Writing => "Writing results", // Pen to paper, or JSON to disk
             AnalysisStep::Complete => "Complete",       // The end. Congratulations.
         }
@@ -71,8 +73,8 @@ pub fn run_with_progress<F>(
 where
     F: FnMut(AnalysisProgress),
 {
-    // 9 steps to enlightenment (or data overload). Let's not count the 0th step.
-    const TOTAL_STEPS: f32 = 9.0;
+    // 10 steps to enlightenment (or data overload). Let's not count the 0th step.
+    const TOTAL_STEPS: f32 = 10.0;
     let step_frac = |s: f32| (s / TOTAL_STEPS).clamp(0.0, 1.0);
 
     // Give me a reason to stop playing god and end this thread right now.
@@ -119,10 +121,9 @@ where
             .as_ref()
             .map(|d| d.channels_cache.clone())
             .unwrap_or_default(),
-        activity_cache: existing
+        insights_cache: existing
             .as_ref()
-            .map(|d| d.activity_cache.clone())
-            .unwrap_or_default(),
+            .and_then(|d| d.insights_cache.clone()),
         ..AnalysisData::default()
     };
 
@@ -168,14 +169,20 @@ where
         "Analyzing activity events...",
     );
     check_abort()?;
-    workers::analyze_activity(source_dirs.activity.as_deref(), &mut stats, |f, d| {
-        emit(
-            &mut on_progress,
-            step_frac(5.0 + f),
-            AnalysisStep::Activity,
-            format!("Analyzing activity events... {d}"),
-        );
-    })?;
+    // One deduplicated streaming pass feeds both stats.activity and the
+    // insights aggregates (the telemetry folders contain overlapping copies).
+    crate::insights::compute_activity(
+        source_dirs.activity.as_deref(),
+        &mut stats,
+        |f, label| {
+            emit(
+                &mut on_progress,
+                step_frac(5.0 + f),
+                AnalysisStep::Activity,
+                format!("Analyzing activity events... {label}"),
+            );
+        },
+    )?;
 
     emit(
         &mut on_progress,
@@ -195,6 +202,17 @@ where
     emit(
         &mut on_progress,
         step_frac(8.0),
+        AnalysisStep::Insights,
+        "Computing insights...",
+    );
+    check_abort()?;
+    crate::insights::compute_account(source_dirs.account.as_deref(), &mut stats)?;
+    crate::insights::compute_social(source_dirs.messages.as_deref(), &mut stats)?;
+    crate::insights::rank_servers(source_dirs.servers.as_deref(), &mut stats)?;
+
+    emit(
+        &mut on_progress,
+        step_frac(9.0),
         AnalysisStep::Writing,
         "Writing results...",
     );
@@ -204,6 +222,9 @@ where
         results_dir.join("report.md"),
         report::generate_markdown_report(&stats),
     );
+    let _ = crate::insights::write_summaries(&results_dir, &stats.insights);
+    // Point-in-time snapshot for the "Compare exports" screen.
+    let _ = crate::compare::write_snapshot(&results_dir, &stats);
 
     emit(
         &mut on_progress,
@@ -344,4 +365,40 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
 // Fun fact: The universe has leap years to keep developers employed.
 fn is_leap(y: u64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn existing_results_deserialize_with_insights_cache() {
+        let dir = Path::new("data/results-rs");
+        if !dir.join("data.json").exists() {
+            return; // no local export; nothing to verify
+        }
+        let data = read_data(dir)
+            .expect("read_data should not error")
+            .expect("data.json should exist");
+        assert!(
+            data.insights_cache.is_some(),
+            "insights_cache should deserialize from existing results"
+        );
+        assert!(data.insights_cache.as_ref().unwrap().aggregate.events_total > 0);
+
+        // Signature must match a recomputation over the live Activity folder,
+        // otherwise every analysis rescans the multi-GB event logs.
+        let activity_dir = Path::new("data/Activity");
+        if !activity_dir.exists() {
+            return;
+        }
+        let mut files: Vec<PathBuf> = crate::insights::activity_event_files(activity_dir);
+        files.sort();
+        let sig = crate::insights::versioned_signature(&files);
+        assert_eq!(
+            data.insights_cache.unwrap().signature,
+            sig,
+            "stored insights_cache signature drifted from live inputs"
+        );
+    }
 }

@@ -29,6 +29,14 @@ pub(crate) fn draw_gallery(frame: &mut ratatui::Frame<'_>, app: &AppState, area:
         .constraints([Constraint::Length(2), Constraint::Min(5)])
         .split(area);
 
+    // Per-category counts for the tab badges.
+    let count_for = |cat: &Option<&str>| -> usize {
+        match cat {
+            Some(c) => app.gallery.files.iter().filter(|f| &f.category == c).count(),
+            None => app.gallery.files.len(),
+        }
+    };
+
     let mut tab_spans = Vec::new();
     for (i, (opt, label)) in categories.iter().enumerate() {
         let active = match (&app.gallery.category_filter, opt) {
@@ -51,7 +59,7 @@ pub(crate) fn draw_gallery(frame: &mut ratatui::Frame<'_>, app: &AppState, area:
             Style::default().fg(Color::DarkGray)
         };
         tab_spans.push(ratatui::text::Span::styled(
-            format!(" {num_key}:{label_text} "),
+            format!(" {num_key}:{label_text} ({}) ", count_for(opt)),
             style,
         ));
         if i < categories.len() - 1 {

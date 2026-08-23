@@ -499,11 +499,16 @@ mod tests {
         let first_final_label = Arc::new(Mutex::new(String::new()));
         {
             let label_ref = first_final_label.clone();
-            download_attachments(&results_dir, links.clone(), move |progress| {
-                if let Ok(mut label) = label_ref.lock() {
-                    *label = progress.label;
-                }
-            })?;
+            download_attachments(
+                &results_dir,
+                links.clone(),
+                Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                move |progress: DownloadProgress| {
+                    if let Ok(mut label) = label_ref.lock() {
+                        *label = progress.label;
+                    }
+                },
+            )?;
         }
         let first_label = first_final_label.lock().unwrap().clone();
         assert!(first_label.contains("2 saved"));
@@ -517,11 +522,16 @@ mod tests {
         let second_final_label = Arc::new(Mutex::new(String::new()));
         {
             let label_ref = second_final_label.clone();
-            download_attachments(&results_dir, links, move |progress| {
-                if let Ok(mut label) = label_ref.lock() {
-                    *label = progress.label;
-                }
-            })?;
+            download_attachments(
+                &results_dir,
+                links,
+                Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                move |progress| {
+                    if let Ok(mut label) = label_ref.lock() {
+                        *label = progress.label;
+                    }
+                },
+            )?;
         }
         let second_label = second_final_label.lock().unwrap().clone();
         assert!(second_label.contains("0 saved"));

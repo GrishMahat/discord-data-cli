@@ -2,6 +2,63 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.3.0] - 2026-08-23
+
+### Highlights
+- **Global Message Search**: New dedicated search screen — full-text search across every channel with streaming results, match highlighting, and type/content filters. Open it with `/` from any main screen, the sidebar, or the Support & Activity "Search" tab.
+- **Insights Engine**: A new analysis pass turns the raw export into human-readable analytics — billing timeline, privacy posture, DM contacts, link intelligence, voice/RTC quality, device profile, sessionization, and personal records — rendered on a new scrollable Insights screen and written to `results-rs/summaries/*.json`.
+- **Compare Two Exports**: Every analysis now saves a snapshot of headline stats. The new Compare screen diffs any snapshot against the previous one (messages, servers, DMs, links, voice, active days, top channel/contact/word) with green/red deltas.
+- **Activity Heatmap**: GitHub-style contribution grid of daily message activity on a new Activity Map screen, with quantile color levels, month labels, and `←`/`→` year navigation.
+- **Multi-Year Activity Wall**: The Activity Map now shows up to six year-minimaps at once (3×2 grid), each with per-year message totals and active-day counts, all sharing one color scale for instant cross-year comparison. More than six years? `←`/`→` pages through the rest.
+- **Split-Pane Channel Browser**: The flat channel list is now a two-pane browser — channels on the left, a background-loaded live message preview plus a per-channel Stats panel (first/last dates, attachments, emoji, top words) on the right.
+- **Headless Analysis**: New `--analyze` CLI flag runs the full analysis without the TUI, prints an insight digest, and exits (cron/scheduled re-analysis friendly).
+
+### Features
+- **Message Search** (`src/ui/screens/search.rs`):
+    - Query input with paste support; Enter runs the search, results stream in as files are scanned.
+    - Filter pills for channel type (All/DMs/Groups/Threads) and content (Any/Attachments/Links); changing filters re-runs automatically.
+    - Results show kind label, channel title, timestamp, and a snippet with the matched text highlighted; Enter opens the message's channel in full context.
+    - Cancel-safe via generation counter; capped at 400 matches with a "(capped)" note.
+- **Insights Screen** (`src/ui/screens/insights.rs`):
+    - Headline pills (payments, active days, voice hours, streak record) over scrollable sections: Records, Billing, Voice/RTC Quality, Devices & Clients, Sessions, Contacts, Top Servers, Link Intelligence, Privacy Posture.
+    - Privacy posture stores presence flags only (MFA, verified, phone attached, payment sources, data-access requests) — no emails, phone numbers or IPs are persisted.
+- **Voice/RTC Quality**: connections vs disconnects/reconnects, average ping/MOS/connect time, packet loss, connected/speaking/listening minutes, minutes per network type, top media relay hosts, disconnect reasons.
+- **Billing Timeline**: payment history (amount/currency/gateway/refunds), totals per currency, gateway breakdown, entitlement and virtual-currency transaction counts.
+- **Personal Records**: first/last message dates, longest message ever (chars + date), biggest channel, busiest telemetry day, longest daily streak.
+- **Contacts**: ranked DM contacts and group DMs with message counts and first → last interaction dates.
+- **Server Engagement**: servers ranked by telemetry events per guild (resolved against `Servers/index.json`) with audit-log entry counts.
+- **Settings Redesign**: grouped form layout (General / Display / Downloads / Privacy) with path entries opening the Setup wizard, adjustable preview length, auto-download toggle, full mouse and scroll support.
+- **Home Dashboard Polish**: Top Channels now render proportional bars; Quick Actions (`R` Re-analyze, `D` Download, `E` Export) are real working key bindings.
+- **Channel Sort Orders**: The channel browser can sort by most messages (default), name (A-Z), or most recently active — cycle with `O`. Counts render as activity-tier badges (bright for busy channels, ghosted for empty ones).
+- **Gallery Count Badges**: Every category tab shows its file count inline.
+
+### Performance & Efficiency
+- **Single Deduplicated Telemetry Pass**: The four Activity subfolders (analytics/modeling/reporting/tns) contain overlapping copies of the same events (identical `event_id`). All aggregation now happens in one global pass with id-based deduplication (~1.4M duplicates skipped on the reference export), fixing ~4x inflated activity totals.
+- **Signature-Cached Aggregates**: The multi-GB event scan runs only when input mtimes/sizes change (signature also mixes an aggregate schema version). Cold scan ≈60s over 5.9 GB; warm analyses complete in well under a second.
+- **Streaming Search Reader**: New `data::utils::stream_records` parses JSON arrays/NDJSON incrementally instead of loading whole files.
+- **Per-Day Extraction**: Daily message counts ride the existing per-channel mtime cache (`CHANNEL_CACHE_VERSION` bumps force a single cheap reparse when extraction logic changes).
+
+### UI & Experience
+- Sidebar expanded to Dashboard / Analyze Now / Overview / Insights / Compare / Activity Map / Support / Activity / Search / Channels / Gallery / Download / Settings / Quit, with disabled-state reasons preserved.
+- Live preview pane shows a spinner while loading and pins to the live tail; `,` / `.` or mouse wheel page upward through history.
+- Status-bar help strings updated for every new screen.
+
+### Bug Fixes
+- **Support/Activity Reload Loop**: Both background loaders shared a single result channel, so starting one load right after the other orphaned the first worker's results forever — re-entering the screens respawned workers endlessly ("Loading…" forever). Each dataset now owns its channel, load failures are latched (with an inline error and manual `r` refresh to retry) instead of auto-respawning, and switching to the Activity tab triggers its load on demand.
+- **Crash on Analyze Now**: Starting an analysis from the menu crashed the whole TUI (`index out of bounds` on the step checklist) after the new Insights step made the checklist nine rows while the layout still allocated eight, and its per-step progress math still divided by the old step count. Layout rows are now derived from the checklist length, the card was enlarged to fit, and progress math scales with step count.
+- **Tab Behavior on Support & Activity**: Pressing Tab on the tabbed screen cycled the global sidebar instead of doing anything useful. Tab / Shift+Tab now switch the screen's own tabs (Support → Activity → Search) as users expect; sidebar navigation stays available via mouse and on other screens.
+- **Silent Key Handling Gaps**: Several screens were never added to the global Tab/Enter/`q` handler lists, so Tab-cycling and quit quietly did nothing past Insights. All 14 screens are now consistently wired.
+- **Search Snippet Unicode Drift**: Match highlighting sliced the original string using indices from a lowercased copy, which can change length ('İ', 'ﬀ'), causing misaligned highlights and potential panics. Matching is now done per-character 1:1 with clamped bounds.
+- **Duplicate Snapshots**: Re-running analysis unchanged created a new snapshot every time because the comparison included the run timestamp; snapshots are now compared by stats alone.
+- **Gallery Image Viewing on Non-iTerm Terminals**: In-terminal image rendering was gated behind iTerm protocol detection only, so Kitty/sixel/other terminals silently fell back to opening files externally. viuer now picks the best available backend automatically (Kitty → sixel → iTerm → Unicode half-blocks) and only falls back to the OS opener if rendering fails, with status feedback either way.
+
+### Architecture & Under-the-hood
+- New modules: `src/insights/`, `src/compare/`, plus screens/handlers for search, insights, compare, and activity map.
+- Analyzer pipeline is now 10 steps, with the Activity step producing both `stats.activity` and the insight aggregates from one scan; the old per-file `activity_cache` was removed in favor of the shared signature-gated cache.
+- Per-channel cache carries a `cache_version`; per-file aggregates carry `EVENT_AGGREGATE_VERSION`.
+- Analysis writes `summaries/*.json` and appends to `snapshots/` during the Writing step; snapshot writes are skipped when nothing changed.
+
+---
 ## [v0.2.0] - 2026-03-21
 
 ### Architecture & Refactoring

@@ -37,13 +37,44 @@ impl Default for InteractiveSettings {
 }
 
 // Which channels do you want to relive? ALL OF THEM? Bold choice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ChannelFilter {
+    #[default]
     All,
     Dm,
     GroupDm,
     PublicThread,
     Voice,
+}
+
+/// Sort order for the channel browser list.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum ChannelSortMode {
+    /// Most messages first (default).
+    #[default]
+    Count,
+    /// A -> Z by title.
+    Name,
+    /// Most recently active first (falls back to count when unknown).
+    Recent,
+}
+
+impl ChannelSortMode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            ChannelSortMode::Count => "most msgs",
+            ChannelSortMode::Name => "A-Z",
+            ChannelSortMode::Recent => "recent",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            ChannelSortMode::Count => ChannelSortMode::Name,
+            ChannelSortMode::Name => ChannelSortMode::Recent,
+            ChannelSortMode::Recent => ChannelSortMode::Count,
+        }
+    }
 }
 
 impl ChannelFilter {
@@ -64,12 +95,16 @@ pub(crate) enum Screen {
     Setup,
     Home,
     Overview,
+    Insights,
+    Compare,
+    ActivityMap,
     SupportActivity,
     SupportTicketDetail,
     Activity,
     ActivityDetail,
     ChannelList,
     MessageView,
+    Search,
     Settings,
     Analyzing,
     Downloading,
@@ -382,6 +417,79 @@ pub(crate) struct GalleryState {
     pub(crate) category_filter: Option<String>,
 }
 
+/// Which part of the search screen has keyboard focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SearchField {
+    #[default]
+    Input,
+    TypeFilter,
+    HasFilter,
+    Results,
+}
+
+/// Content filter for message search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SearchHasFilter {
+    #[default]
+    Any,
+    Attachments,
+    Links,
+}
+
+impl SearchHasFilter {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            SearchHasFilter::Any => "Any",
+            SearchHasFilter::Attachments => "Attachments",
+            SearchHasFilter::Links => "Links",
+        }
+    }
+}
+
+/// A single search hit: one message inside one channel.
+#[derive(Debug, Clone)]
+pub(crate) struct SearchResult {
+    /// Folder name under messages/ — used to reopen the channel context.
+    pub(crate) channel_key: String,
+    pub(crate) title: String,
+    pub(crate) kind: data::ChannelKind,
+    pub(crate) timestamp: String,
+    pub(crate) content: String,
+}
+
+impl Default for SearchResult {
+    fn default() -> Self {
+        Self {
+            channel_key: String::new(),
+            title: String::new(),
+            kind: data::ChannelKind::Other,
+            timestamp: String::new(),
+            content: String::new(),
+        }
+    }
+}
+
+/// State for the global message search screen.
+#[derive(Default)]
+pub(crate) struct SearchState {
+    pub(crate) input: String,
+    pub(crate) field: SearchField,
+    pub(crate) type_filter: ChannelFilter,
+    pub(crate) has_filter: SearchHasFilter,
+    pub(crate) results: Vec<SearchResult>,
+    pub(crate) cursor: usize,
+    pub(crate) scroll: usize,
+    pub(crate) running: bool,
+    pub(crate) scanned_files: usize,
+    pub(crate) total_files: usize,
+    pub(crate) total_matches: usize,
+    pub(crate) truncated: bool,
+    /// Bumped on every new run; stale worker events are dropped by generation.
+    pub(crate) generation: u64,
+    pub(crate) rx: Option<std::sync::mpsc::Receiver<crate::app::SearchEvent>>,
+    pub(crate) cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
 // THE ONE RING TO RULE THEM ALL. Everything this app knows lives here.
 pub(crate) struct AppState {
     pub(crate) config: AppConfig,
@@ -414,6 +522,7 @@ pub(crate) struct AppState {
     pub(crate) settings_cursor: usize,
     pub(crate) channel_cursor: usize,
     pub(crate) current_filter: ChannelFilter,
+    pub(crate) channel_sort: ChannelSortMode,
     pub(crate) open_channel: Option<data::MessageChannel>,
     pub(crate) open_message_lines: Vec<String>,
     pub(crate) open_message_scroll: usize,
@@ -431,11 +540,27 @@ pub(crate) struct AppState {
     pub(crate) _last_data_mtime: u64,
     pub(crate) support_activity_loading: bool,
     pub(crate) activity_loading: bool,
-    pub(crate) support_activity_rx: Option<Receiver<SupportActivityEvent>>,
+    pub(crate) support_tickets_rx: Option<Receiver<SupportActivityEvent>>,
+    pub(crate) activity_events_rx: Option<Receiver<SupportActivityEvent>>,
+    /// Set when the last ticket load failed; blocks auto-respawn loops.
+    pub(crate) support_tickets_failed: Option<String>,
+    /// Set when the last activity load failed; blocks auto-respawn loops.
+    pub(crate) activity_failed: Option<String>,
     pub(crate) channel_loading: bool,
     pub(crate) channel_rx: Option<Receiver<ChannelEvent>>,
     pub(crate) gallery_loading: bool,
     pub(crate) gallery_rx: Option<Receiver<GalleryEvent>>,
+    /// Live message preview shown in the channel browser split pane.
+    pub(crate) channel_preview_lines: Vec<String>,
+    pub(crate) channel_preview_for: Option<String>,
+    pub(crate) channel_preview_scroll: usize,
+    pub(crate) channel_preview_loading: bool,
+    pub(crate) channel_preview_rx: Option<Receiver<ChannelPreviewEvent>>,
+    pub(crate) search: SearchState,
+    pub(crate) insights_scroll: usize,
+    pub(crate) compare_cursor: usize,
+    /// Year offset (from newest) selected in the activity heatmap.
+    pub(crate) map_page: usize,
 }
 
 impl AppState {
@@ -491,6 +616,7 @@ impl AppState {
             settings_cursor: 0,
             channel_cursor: 0,
             current_filter: ChannelFilter::All,
+            channel_sort: ChannelSortMode::Count,
             open_channel: None,
             open_message_lines: Vec::new(),
             open_message_scroll: 0,
@@ -513,11 +639,23 @@ impl AppState {
             _last_data_mtime: 0,
             support_activity_loading: false,
             activity_loading: false,
-            support_activity_rx: None,
+            support_tickets_rx: None,
+            activity_events_rx: None,
+            support_tickets_failed: None,
+            activity_failed: None,
             channel_loading: false,
             channel_rx: None,
             gallery_loading: false,
             gallery_rx: None,
+            channel_preview_lines: Vec::new(),
+            channel_preview_for: None,
+            channel_preview_scroll: 0,
+            channel_preview_loading: false,
+            channel_preview_rx: None,
+            search: SearchState::default(),
+            insights_scroll: 0,
+            compare_cursor: 0,
+            map_page: 0,
         };
 
         // If there was a session, pick up where we left off!
@@ -544,6 +682,91 @@ impl AppState {
             let _ = fs::write(&self.config_path, content);
         }
     }
+
+    /// Snapshots on disk for the Compare screen, newest first.
+    pub(crate) fn compare_snapshots(&self) -> Vec<(String, crate::compare::Snapshot)> {
+        let results_dir = self.config.results_path(&self.config_path, &self.id);
+        crate::compare::list_snapshots(&results_dir)
+    }
+}
+
+/// Minimal AppState for UI unit tests (no disk access).
+#[cfg(test)]
+pub(crate) fn test_app_with_data(data: analyzer::AnalysisData) -> AppState {
+    let mut app = AppState {
+        config: AppConfig::default(),
+        config_path: PathBuf::from("/tmp/opencode/none.toml"),
+        id: String::new(),
+        setup: SetupState::new(String::new()),
+        settings: InteractiveSettings::default(),
+        channel_cache: None,
+        last_data: Some(data),
+        status: String::new(),
+        error: None,
+        analysis_progress: 0.0,
+        analysis_step: analyzer::AnalysisStep::Complete,
+        analysis_running: false,
+        analysis_abort: Arc::new(AtomicBool::new(false)),
+        analysis_started_at: None,
+        analysis_rx: None,
+        analysis_current_file: None,
+        analysis_files_processed: None,
+        analysis_total_files: None,
+        download_progress: 0.0,
+        download_running: false,
+        download_abort: Arc::new(AtomicBool::new(false)),
+        download_rx: None,
+        screen: Screen::Overview,
+        should_quit: false,
+        animation_tick: 0,
+        sidebar_cursor: None,
+        home_cursor: 0,
+        settings_cursor: 0,
+        channel_cursor: 0,
+        current_filter: ChannelFilter::All,
+        channel_sort: ChannelSortMode::Count,
+        open_channel: None,
+        open_message_lines: Vec::new(),
+        open_message_scroll: 0,
+        support_tickets: None,
+        support_ticket_cursor: 0,
+        support_ticket_scroll: 0,
+        support_activity_tab: SupportActivityTab::Support,
+        activity_events: None,
+        activity_cursor: 0,
+        activity_filters: ActivityFilters::default(),
+        activity_filter_edit: None,
+        activity_sort: ActivitySortMode::Newest,
+        activity_detail_scroll: 0,
+        gallery: GalleryState {
+            files: Vec::new(),
+            cursor: 0,
+            scroll: 0,
+            category_filter: None,
+        },
+        _last_data_mtime: 0,
+        support_activity_loading: false,
+        activity_loading: false,
+        support_tickets_rx: None,
+        activity_events_rx: None,
+        support_tickets_failed: None,
+        activity_failed: None,
+        channel_loading: false,
+        channel_rx: None,
+        gallery_loading: false,
+        gallery_rx: None,
+        channel_preview_lines: Vec::new(),
+        channel_preview_for: None,
+        channel_preview_scroll: 0,
+        channel_preview_loading: false,
+        channel_preview_rx: None,
+        search: SearchState::default(),
+        insights_scroll: 0,
+        compare_cursor: 0,
+        map_page: 0,
+    };
+    app.screen = Screen::ActivityMap;
+    app
 }
 
 // The main menu. All your life choices, neatly organized.

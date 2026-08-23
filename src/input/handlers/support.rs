@@ -19,6 +19,7 @@ pub(crate) fn handle_support_activity_key(app: &mut AppState, key: KeyEvent) -> 
             }
             KeyCode::Char('2') => {
                 app.support_activity_tab = SupportActivityTab::Activity;
+                crate::app::ensure_activity_events_loaded(app);
                 return Ok(());
             }
             KeyCode::Char('3') => {
@@ -30,7 +31,11 @@ pub(crate) fn handle_support_activity_key(app: &mut AppState, key: KeyEvent) -> 
                 return Ok(());
             }
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => {
+                let was_activity = app.support_activity_tab == SupportActivityTab::Activity;
                 app.support_activity_tab = app.support_activity_tab.next();
+                if app.support_activity_tab == SupportActivityTab::Activity && !was_activity {
+                    crate::app::ensure_activity_events_loaded(app);
+                }
                 return Ok(());
             }
             _ => {}
@@ -70,6 +75,9 @@ fn handle_support_tab_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
 
 fn handle_support_search_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     match key.code {
+        KeyCode::Enter | KeyCode::Char('s') | KeyCode::Char('S') => {
+            crate::app::open_search_screen(app);
+        }
         KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Backspace => {
             app.screen = Screen::Home;
         }

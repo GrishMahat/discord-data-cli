@@ -98,9 +98,23 @@ fn draw_home_dashboard(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rec
     );
 
     let actions = Line::from(vec![
-        ratatui::text::Span::styled("[R] Re-analyze  ", Style::default().fg(Color::Cyan)),
-        ratatui::text::Span::styled("[D] Download  ", Style::default().fg(Color::Cyan)),
-        ratatui::text::Span::styled("[E] Export", Style::default().fg(Color::DarkGray)),
+        ratatui::text::Span::styled(
+            " R Re-analyze ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        ratatui::text::Span::raw("  "),
+        ratatui::text::Span::styled(
+            " D Download ",
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        ),
+        ratatui::text::Span::raw("  "),
+        ratatui::text::Span::styled(
+            " E Export ",
+            Style::default().fg(Color::DarkGray),
+        ),
     ]);
     frame.render_widget(
         Paragraph::new(actions).alignment(Alignment::Center).block(
@@ -117,41 +131,45 @@ fn draw_home_dashboard(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rec
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(right_rows[2]);
 
-    let mut top_lines: Vec<Line> = data
-        .messages
-        .top_channels
+    let top_entries: Vec<(String, u64)> = if !data.messages.top_channels.is_empty() {
+        data.messages
+            .top_channels
+            .iter()
+            .take(6)
+            .map(|(n, c)| (n.clone(), *c))
+            .collect()
+    } else {
+        top_counts(&data.messages.by_channel_type, 5)
+    };
+
+    let max_count = top_entries.iter().map(|(_, c)| *c).max().unwrap_or(1).max(1);
+
+    let mut top_lines: Vec<Line> = top_entries
         .iter()
-        .take(6)
         .map(|(name, count)| {
+            let bar_len = ((*count as usize) * 10 / (max_count as usize)).max(if *count > 0 {
+                1
+            } else {
+                0
+            });
+            let bar = format!(
+                "{}{}",
+                "█".repeat(bar_len),
+                "░".repeat(10 - bar_len)
+            );
             Line::from(vec![
                 ratatui::text::Span::styled(
-                    format!("  {name:<18}"),
+                    format!(" {name:<18}"),
                     Style::default().fg(Color::White),
                 ),
                 ratatui::text::Span::styled(
-                    format!("{:>8}", fmt_num(*count)),
+                    format!("{:>8} ", fmt_num(*count)),
                     Style::default().fg(Color::DarkGray),
                 ),
+                ratatui::text::Span::styled(bar, Style::default().fg(Color::Cyan)),
             ])
         })
         .collect();
-    if top_lines.is_empty() {
-        top_lines = top_counts(&data.messages.by_channel_type, 5)
-            .into_iter()
-            .map(|(name, count)| {
-                Line::from(vec![
-                    ratatui::text::Span::styled(
-                        format!("  {name:<18}"),
-                        Style::default().fg(Color::White),
-                    ),
-                    ratatui::text::Span::styled(
-                        format!("{:>8}", fmt_num(count)),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ])
-            })
-            .collect();
-    }
     if top_lines.is_empty() {
         top_lines.push(Line::styled(
             "  No channel stats available.",

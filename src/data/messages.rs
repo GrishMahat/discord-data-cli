@@ -20,6 +20,8 @@ pub(crate) struct MessageChannel {
     pub(crate) kind: ChannelKind,
     pub(crate) message_count: usize,
     pub(crate) messages_path: PathBuf,
+    /// Folder name under messages/ — stable key into analyzer channels_cache.
+    pub(crate) dir_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,11 +77,12 @@ pub(crate) fn load_channels(
 
         if let Some((count, title, type_str)) = cached.get(&dir_name) {
             channels.push(MessageChannel {
-                id: dir_name,
+                id: dir_name.clone(),
                 title: title.clone(),
                 kind: detect_channel_kind_str(type_str),
                 message_count: *count as usize,
                 messages_path: channel_dir.join("messages.json"),
+                dir_name,
             });
             continue;
         }
@@ -100,7 +103,7 @@ pub(crate) fn load_channels(
             .as_ref()
             .and_then(|v| v.get("id"))
             .and_then(value_to_plain_string)
-            .unwrap_or_else(|| dir_name);
+            .unwrap_or_else(|| dir_name.clone());
 
         let title = channel_title(channel_json.as_ref(), &id);
         let kind = detect_channel_kind(channel_json.as_ref());
@@ -112,6 +115,7 @@ pub(crate) fn load_channels(
             kind,
             message_count,
             messages_path,
+            dir_name,
         });
     }
 

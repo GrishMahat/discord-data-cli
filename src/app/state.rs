@@ -28,16 +28,21 @@ pub(crate) fn log_msg(msg: &str) {
 
 pub(crate) fn apply_settings_selection(app: &mut AppState) {
     match app.settings_cursor {
-        0 => {
+        0..=2 => open_setup_with_current_values(app),
+        3 => {
+            // Cycle preview length in steps of 5, wrapping at 500 back to 10.
+            app.settings.preview_messages = if app.settings.preview_messages >= 500 {
+                10
+            } else {
+                (app.settings.preview_messages + 5).min(500)
+            };
+            app.channel_preview_for = None; // force re-preview with new length
+            app.save_session();
+        }
+        4 => {
             app.settings.download_attachments = !app.settings.download_attachments;
             app.save_session();
         }
-        1 => {
-            app.settings.preview_messages = (app.settings.preview_messages + 5).min(500);
-            app.save_session();
-        }
-        2 => open_setup_with_current_values(app),
-        3 => app.screen = Screen::Home,
         _ => {}
     }
 }
@@ -137,7 +142,9 @@ pub(crate) fn screen_disabled_reason(app: &AppState, screen: Screen) -> Option<S
         Screen::Activity if !folder_available(data, "activity") => {
             Some("Activity is disabled: source data was not included in this export.".to_owned())
         }
-        Screen::ChannelList | Screen::Gallery if !folder_available(data, "messages") => {
+        Screen::ChannelList | Screen::Gallery | Screen::Search
+            if !folder_available(data, "messages") =>
+        {
             Some("Channels is disabled: messages data was not included in this export.".to_owned())
         }
         _ => None,
@@ -263,6 +270,7 @@ fn open_setup_with_current_values(app: &mut AppState) {
 pub(crate) fn switch_filter(app: &mut AppState, filter: ChannelFilter) -> Result<()> {
     app.current_filter = filter;
     app.channel_cursor = 0;
+    app.channel_preview_for = None;
     ensure_channels_loaded(app);
     Ok(())
 }
@@ -270,14 +278,21 @@ pub(crate) fn switch_filter(app: &mut AppState, filter: ChannelFilter) -> Result
 pub(crate) fn open_channel_filter(app: &mut AppState, filter: ChannelFilter) -> Result<()> {
     app.current_filter = filter;
     app.channel_cursor = 0;
+    app.channel_preview_for = None;
     ensure_channels_loaded(app);
     app.screen = Screen::ChannelList;
     Ok(())
 }
 
+pub(crate) fn open_search_screen(app: &mut AppState) {
+    try_load_existing_data(app);
+    ensure_channels_loaded(app);
+    app.screen = Screen::Search;
+}
+
 pub(crate) fn open_support_activity(app: &mut AppState) -> Result<()> {
     try_load_existing_data(app);
-    if app.support_tickets.is_none() {
+    if app.support_tickets.is_none() && app.support_tickets_failed.is_none() {
         start_support_tickets_load(app);
     }
     app.support_activity_tab = crate::app::SupportActivityTab::Support;
@@ -287,7 +302,7 @@ pub(crate) fn open_support_activity(app: &mut AppState) -> Result<()> {
 
 pub(crate) fn open_activity(app: &mut AppState) -> Result<()> {
     try_load_existing_data(app);
-    if app.activity_events.is_none() {
+    if app.activity_events.is_none() && app.activity_failed.is_none() {
         start_activity_events_load(app);
     }
     app.support_activity_tab = crate::app::SupportActivityTab::Activity;
@@ -296,7 +311,7 @@ pub(crate) fn open_activity(app: &mut AppState) -> Result<()> {
 }
 
 pub(crate) fn start_support_tickets_load(app: &mut AppState) {
-    if app.support_activity_loading {
+    if app.support_activity_loading || app.support_tickets_rx.is_some() {
         return;
     }
     app.support_activity_loading = true;
@@ -308,11 +323,11 @@ pub(crate) fn start_support_tickets_load(app: &mut AppState) {
         let result = data::load_support_tickets(&package_dir, &aliases).map_err(|e| e.to_string());
         let _ = tx.send(SupportActivityEvent::TicketsFinished(result));
     });
-    app.support_activity_rx = Some(rx);
+    app.support_tickets_rx = Some(rx);
 }
 
 pub(crate) fn start_activity_events_load(app: &mut AppState) {
-    if app.activity_loading {
+    if app.activity_loading || app.activity_events_rx.is_some() {
         return;
     }
     app.activity_loading = true;
@@ -325,35 +340,59 @@ pub(crate) fn start_activity_events_load(app: &mut AppState) {
             .map_err(|e| e.to_string());
         let _ = tx.send(SupportActivityEvent::ActivityFinished(result));
     });
-    app.support_activity_rx = Some(rx);
+    app.activity_events_rx = Some(rx);
 }
 
 pub(crate) fn poll_support_activity(app: &mut AppState) {
-    if let Some(rx) = &app.support_activity_rx {
-        let mut closed = false;
-        loop {
-            match rx.try_recv() {
-                Ok(SupportActivityEvent::TicketsFinished(result)) => {
-                    app.support_activity_loading = false;
-                    if let Ok(tickets) = result {
-                        app.support_tickets = Some(tickets);
-                    }
+    // Tickets worker.
+    if let Some(rx) = &app.support_tickets_rx {
+        match rx.try_recv() {
+            Ok(SupportActivityEvent::TicketsFinished(Ok(tickets))) => {
+                app.support_activity_loading = false;
+                app.support_tickets_failed = None;
+                app.support_tickets = Some(tickets);
+                app.support_tickets_rx = None;
+            }
+            Ok(SupportActivityEvent::TicketsFinished(Err(e))) => {
+                app.support_activity_loading = false;
+                // Latch the failure so navigation doesn't respawn workers in a loop.
+                if app.support_tickets_failed.is_none() {
+                    app.support_tickets_failed = Some(e.clone());
                 }
-                Ok(SupportActivityEvent::ActivityFinished(result)) => {
-                    app.activity_loading = false;
-                    if let Ok(events) = result {
-                        app.activity_events = Some(events);
-                    }
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    closed = true;
-                    break;
-                }
+                app.status = format!("Support tickets failed to load: {e}");
+                app.support_tickets_rx = None;
+            }
+            Ok(SupportActivityEvent::ActivityFinished(_)) => {} // wrong channel; ignore
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                app.support_activity_loading = false;
+                app.support_tickets_rx = None;
             }
         }
-        if closed || (!app.support_activity_loading && !app.activity_loading) {
-            app.support_activity_rx = None;
+    }
+    // Activity events worker.
+    if let Some(rx) = &app.activity_events_rx {
+        match rx.try_recv() {
+            Ok(SupportActivityEvent::ActivityFinished(Ok(events))) => {
+                app.activity_loading = false;
+                app.activity_failed = None;
+                app.activity_events = Some(events);
+                app.activity_events_rx = None;
+            }
+            Ok(SupportActivityEvent::ActivityFinished(Err(e))) => {
+                app.activity_loading = false;
+                if app.activity_failed.is_none() {
+                    app.activity_failed = Some(e.clone());
+                }
+                app.status = format!("Activity failed to load: {e}");
+                app.activity_events_rx = None;
+            }
+            Ok(SupportActivityEvent::TicketsFinished(_)) => {} // wrong channel; ignore
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                app.activity_loading = false;
+                app.activity_events_rx = None;
+            }
         }
     }
 }
@@ -364,6 +403,9 @@ pub(crate) fn refresh_support_activity_data(app: &mut AppState) -> Result<()> {
     let events = data::load_recent_activity_events(&package_dir, &app.config.source_aliases, 250)?;
     app.support_tickets = Some(tickets);
     app.activity_events = Some(events);
+    // Manual refresh clears failure latches so auto-load can resume later.
+    app.support_tickets_failed = None;
+    app.activity_failed = None;
     Ok(())
 }
 
@@ -625,17 +667,81 @@ pub(crate) fn open_selected_channel(app: &mut AppState) -> Result<()> {
         .get(app.channel_cursor)
         .map(|c| (*c).clone());
     if let Some(channel) = selected {
-        app.open_message_lines =
-            data::load_message_preview(&channel, app.settings.preview_messages)?;
-        app.open_channel = Some(channel);
-        app.open_message_scroll = 0;
-        app.screen = Screen::MessageView;
+        open_channel_direct(app, channel)?;
     }
     Ok(())
 }
 
+pub(crate) fn open_channel_direct(app: &mut AppState, channel: data::MessageChannel) -> Result<()> {
+    app.open_message_lines =
+        data::load_message_preview(&channel, app.settings.preview_messages)?;
+    app.open_channel = Some(channel);
+    app.open_message_scroll = 0;
+    app.screen = Screen::MessageView;
+    Ok(())
+}
+
+/// Desired preview target for the channel browser split pane.
+fn desired_preview_channel(app: &AppState) -> Option<data::MessageChannel> {
+    filtered_channels(app)
+        .get(app.channel_cursor)
+        .map(|c| (*c).clone())
+}
+
+/// Background-load the message tail for the currently selected channel so the
+/// split-pane browser can show a live preview without blocking the UI.
+pub(crate) fn poll_channel_preview(app: &mut AppState) {
+    let desired = desired_preview_channel(app);
+
+    if !app.channel_preview_loading
+        && let Some(channel) = &desired
+        && app.channel_preview_for.as_deref() != Some(channel.dir_name.as_str())
+    {
+        app.channel_preview_loading = true;
+        app.channel_preview_scroll = 0;
+        let key = channel.dir_name.clone();
+        let limit = app.settings.preview_messages.min(80);
+        let worker_channel = channel.clone();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let result = data::load_message_preview(&worker_channel, limit)
+                .map_err(|e| e.to_string());
+            let _ = tx.send(ChannelPreviewEvent::Finished { key, result });
+        });
+        app.channel_preview_rx = Some(rx);
+    }
+
+    if let Some(rx) = &app.channel_preview_rx {
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(ChannelPreviewEvent::Finished { key, result }) => {
+                    app.channel_preview_loading = false;
+                    // Only show if this is still the selected channel.
+                    if desired.as_ref().is_some_and(|c| c.dir_name == key)
+                        && let Ok(lines) = result
+                    {
+                        app.channel_preview_lines = lines;
+                        app.channel_preview_for = Some(key);
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    app.channel_preview_loading = false;
+                    done = true;
+                    break;
+                }
+            }
+        }
+        if done {
+            app.channel_preview_rx = None;
+        }
+    }
+}
+
 pub(crate) fn filtered_channels(app: &AppState) -> Vec<&data::MessageChannel> {
-    app.channel_cache
+    let mut channels: Vec<&data::MessageChannel> = app
+        .channel_cache
         .as_ref()
         .map(|cc| {
             cc.iter()
@@ -648,7 +754,43 @@ pub(crate) fn filtered_channels(app: &AppState) -> Vec<&data::MessageChannel> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    match app.channel_sort {
+        ChannelSortMode::Count => channels.sort_by(|a, b| {
+            b.message_count
+                .cmp(&a.message_count)
+                .then_with(|| a.title.cmp(&b.title))
+        }),
+        ChannelSortMode::Name => channels.sort_by(|a, b| a.title.cmp(&b.title)),
+        ChannelSortMode::Recent => {
+            let last_date = |c: &data::MessageChannel| -> String {
+                app.last_data
+                    .as_ref()
+                    .and_then(|d| d.channels_cache.get(&c.dir_name))
+                    .and_then(|s| s.temporal.last_message_date.clone())
+                    .unwrap_or_default()
+            };
+            channels.sort_by(|a, b| {
+                let (la, lb) = (last_date(a), last_date(b));
+                match (la.is_empty(), lb.is_empty()) {
+                    (false, false) => lb.cmp(&la),
+                    (true, false) => std::cmp::Ordering::Greater,
+                    (false, true) => std::cmp::Ordering::Less,
+                    _ => b.message_count.cmp(&a.message_count),
+                }
+            });
+        }
+    }
+    channels
+}
+
+/// Cycle the channel browser sort order ('o' key).
+pub(crate) fn cycle_channel_sort(app: &mut AppState) {
+    app.channel_sort = app.channel_sort.next();
+    app.channel_cursor = 0;
+    let label = app.channel_sort.label();
+    app.status = format!("Channels sorted by {label}");
 }
 
 pub(crate) fn ensure_channels_loaded(app: &mut AppState) {
@@ -712,15 +854,241 @@ pub(crate) fn try_load_existing_data(app: &mut AppState) {
     }
 }
 
+const SEARCH_MAX_RESULTS: usize = 400;
+const SEARCH_BATCH_SIZE: usize = 25;
+
+/// Kick off (or restart) a background message search over the channel cache.
+pub(crate) fn start_message_search(app: &mut AppState) {
+    let query = app.search.input.trim().to_owned();
+    // Cancel any in-flight scan.
+    app.search.cancel.store(true, Ordering::SeqCst);
+
+    if query.is_empty() || app.search.type_filter == ChannelFilter::Voice {
+        app.search.results.clear();
+        app.search.running = false;
+        app.search.total_matches = 0;
+        app.search.scanned_files = 0;
+        app.search.total_files = 0;
+        return;
+    }
+
+    let channels: Vec<data::MessageChannel> = match &app.channel_cache {
+        Some(cache) => cache
+            .iter()
+            .filter(|c| match app.search.type_filter {
+                ChannelFilter::All => true,
+                ChannelFilter::Dm => c.kind == data::ChannelKind::Dm,
+                ChannelFilter::GroupDm => c.kind == data::ChannelKind::GroupDm,
+                ChannelFilter::PublicThread => c.kind == data::ChannelKind::PublicThread,
+                ChannelFilter::Voice => c.kind == data::ChannelKind::Voice,
+            })
+            .cloned()
+            .collect(),
+        None => Vec::new(),
+    };
+
+    if app.channel_cache.is_none() {
+        ensure_channels_loaded(app);
+        app.status = "Channels still loading — try again in a moment.".to_owned();
+        return;
+    }
+
+    app.search.generation += 1;
+    let generation = app.search.generation;
+    app.search.results.clear();
+    app.search.cursor = 0;
+    app.search.scroll = 0;
+    app.search.total_matches = 0;
+    app.search.scanned_files = 0;
+    app.search.truncated = false;
+    app.search.running = true;
+    app.search.cancel = Arc::new(AtomicBool::new(false));
+
+    let has_filter = app.search.has_filter;
+    let cancel = Arc::clone(&app.search.cancel);
+    let total_files = channels.len();
+    app.search.total_files = total_files;
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        use crate::data::utils::{
+            extract_attachment_urls, extract_message_content, pick_str, stream_records,
+        };
+
+        let needle = query.to_lowercase();
+        let mut total_count = 0usize;
+        let mut batch: Vec<SearchResult> = Vec::new();
+        let mut truncated = false;
+
+        for (i, ch) in channels.iter().enumerate() {
+            if cancel.load(Ordering::SeqCst) {
+                return;
+            }
+            let _ = stream_records(&ch.messages_path, &mut |record| {
+                if truncated || total_count + batch.len() >= SEARCH_MAX_RESULTS {
+                    truncated = true;
+                    return;
+                }
+                let content = extract_message_content(record);
+                if !content.to_lowercase().contains(&needle) {
+                    return;
+                }
+                match has_filter {
+                    SearchHasFilter::Attachments => {
+                        if extract_attachment_urls(record).is_empty() {
+                            return;
+                        }
+                    }
+                    SearchHasFilter::Links => {
+                        if !content.contains("http") {
+                            return;
+                        }
+                    }
+                    SearchHasFilter::Any => {}
+                }
+                let timestamp = pick_str(
+                    record,
+                    &["Timestamp", "timestamp", "timestamp_ms", "date"],
+                )
+                .unwrap_or("unknown")
+                .to_owned();
+                batch.push(SearchResult {
+                    channel_key: ch.dir_name.clone(),
+                    title: ch.title.clone(),
+                    kind: ch.kind,
+                    timestamp,
+                    content,
+                });
+            });
+            if batch.len() >= SEARCH_BATCH_SIZE {
+                let taken = std::mem::take(&mut batch);
+                total_count += taken.len();
+                let _ = tx.send(SearchEvent::Batch {
+                    generation,
+                    matches: taken,
+                });
+            }
+            if i % 25 == 24 {
+                let _ = tx.send(SearchEvent::Progress {
+                    generation,
+                    scanned_files: i + 1,
+                    total_files,
+                    total_matches: total_count + batch.len(),
+                });
+                if truncated {
+                    break;
+                }
+            }
+        }
+
+        if !batch.is_empty() {
+            total_count += batch.len();
+            let _ = tx.send(SearchEvent::Batch {
+                generation,
+                matches: batch,
+            });
+        }
+        let _ = tx.send(SearchEvent::Finished {
+            generation,
+            total_matches: total_count,
+            truncated,
+        });
+    });
+    app.search.rx = Some(rx);
+}
+
+pub(crate) fn poll_search(app: &mut AppState) {
+    let current_gen = app.search.generation;
+    if let Some(rx) = &app.search.rx {
+        let mut finished = false;
+        loop {
+            match rx.try_recv() {
+                Ok(SearchEvent::Batch { generation, matches }) => {
+                    if generation == current_gen {
+                        app.search.results.extend(matches);
+                        if app.search.cursor >= app.search.results.len() {
+                            app.search.cursor = app.search.results.len().saturating_sub(1);
+                        }
+                    }
+                }
+                Ok(SearchEvent::Progress {
+                    generation,
+                    scanned_files,
+                    total_files,
+                    total_matches,
+                }) => {
+                    if generation == current_gen {
+                        app.search.scanned_files = scanned_files;
+                        app.search.total_files = total_files;
+                        app.search.total_matches = total_matches;
+                    }
+                }
+                Ok(SearchEvent::Finished {
+                    generation,
+                    total_matches,
+                    truncated,
+                }) => {
+                    if generation == current_gen {
+                        app.search.running = false;
+                        app.search.total_matches = total_matches;
+                        app.search.truncated = truncated;
+                        app.status = if truncated {
+                            format!("Search stopped at first {} matches.", SEARCH_MAX_RESULTS)
+                        } else {
+                            format!("Search complete: {} matches.", total_matches)
+                        };
+                    }
+                    finished = true;
+                    break;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    app.search.running = false;
+                    finished = true;
+                    break;
+                }
+            }
+        }
+        if finished {
+            app.search.rx = None;
+        }
+    }
+}
+
+/// Open the full message view for the currently selected search result.
+pub(crate) fn open_search_result(app: &mut AppState) -> Result<()> {
+    let Some(result) = app.search.results.get(app.search.cursor).cloned() else {
+        return Ok(());
+    };
+    let channel = app
+        .channel_cache
+        .as_ref()
+        .and_then(|cache| {
+            cache
+                .iter()
+                .find(|c| c.dir_name == result.channel_key || c.id == result.channel_key)
+        })
+        .cloned();
+    if let Some(channel) = channel {
+        open_channel_direct(app, channel)?;
+    } else {
+        app.status = "Channel list not loaded yet — reopen search in a moment.".to_owned();
+    }
+    Ok(())
+}
+
 pub(crate) fn key_help(screen: Screen) -> &'static str {
     match screen {
         Screen::Setup => "Enter: Next, Esc: Quit",
         Screen::Home => "Arrows: Select, Enter: Open, Q: Quit",
         Screen::Overview => "R: Refresh, B: Back",
+        Screen::Insights => "↑↓ Scroll, B: Back",
         Screen::SupportActivity => "1-3: Tabs, ↑↓: Navigate, Enter: Detail, R: Refresh, B: Back",
         Screen::SupportTicketDetail => "↑↓: Scroll, B: Back",
         Screen::ActivityDetail => "↑↓: Scroll, B: Back",
-        Screen::ChannelList => "1-5: Filter, Enter: View, B: Back",
+        Screen::ChannelList => "↑↓ Select, Enter Messages, 1-5 Filter, O Sort, , . Preview, B Back",
+        Screen::Search => "↑↓ Section, Shift+T Query, ←→ Filter/Select, Enter Run/Open, B Back",
+        Screen::Settings => "↑↓ Field, ←→ Adjust, Enter Apply, B Back",
         _ => "B: Back, Q: Quit",
     }
 }
@@ -798,5 +1166,13 @@ fn to_absolute(p: PathBuf) -> Result<PathBuf> {
         Ok(p)
     } else {
         Ok(std::env::current_dir()?.join(p))
+    }
+}
+
+/// Kick off the activity-events background load if it has never succeeded
+/// (and isn't already running or latched as failed).
+pub(crate) fn ensure_activity_events_loaded(app: &mut AppState) {
+    if app.activity_events.is_none() && app.activity_failed.is_none() {
+        start_activity_events_load(app);
     }
 }

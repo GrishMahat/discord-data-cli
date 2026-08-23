@@ -1,17 +1,11 @@
 use anyhow::Result;
 use regex::Regex;
-use serde::Deserialize;
 use serde_json::Value;
 use std::{
-    borrow::Cow,
     collections::{BTreeMap, HashMap, VecDeque},
-    fs::{self, File},
-    io::{BufRead, BufReader},
+    fs,
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        mpsc::{self, Sender},
-    },
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::UNIX_EPOCH,
 };
@@ -178,261 +172,6 @@ pub fn summarize_ticket(value: &Value, stats: &mut AnalysisData) {
     }
 }
 
-// Are you feeling chatty? Or maybe you're just screaming into the void?
-// 900 files taking 50 terabytes? Oh my god... YES. Let's parse 'em all!
-pub fn analyze_activity<F>(
-    activity_dir: Option<&Path>,
-    stats: &mut AnalysisData,
-    mut on_progress: F,
-) -> Result<()>
-where
-    F: FnMut(f32, String),
-{
-    let Some(activity_dir) = activity_dir else {
-        return Ok(());
-    };
-    let mut files: Vec<PathBuf> = WalkDir::new(activity_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .map(|e| e.into_path())
-        .filter(|p| {
-            p.extension()
-                .map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("json"))
-                .unwrap_or(false)
-        })
-        .collect();
-    files.sort();
-    if files.is_empty() {
-        return Ok(());
-    }
-
-    let mut next_activity_cache = BTreeMap::new();
-    let mut tasks = Vec::new();
-    let mut tasks_paths = Vec::new();
-    for path in files {
-        let mtime = get_mtime_ms(&path);
-        let rel_path = path
-            .strip_prefix(activity_dir)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
-        if let Some(cached) = stats.activity_cache.get(&rel_path) {
-            if cached.mtime_ms == mtime {
-                stats.activity.files += 1;
-                stats.activity.total_events += cached.stats.event_lines;
-                stats.activity.parse_errors += cached.stats.parse_errors;
-                for (et, c) in &cached.stats.event_types {
-                    increment_counter(&mut stats.activity.by_event_type, et, *c);
-                }
-                next_activity_cache.insert(rel_path, cached.clone());
-                continue;
-            }
-        }
-        let index = tasks.len();
-        let size = fs::metadata(&path).map(|m| m.len().max(1)).unwrap_or(1);
-        let short_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown.json")
-            .to_owned();
-        tasks.push(ActivityFileTask {
-            index,
-            path: path.clone(),
-            size,
-            short_name,
-        });
-        tasks_paths.push((index, rel_path, mtime));
-    }
-    if tasks.is_empty() {
-        stats.activity_cache = next_activity_cache;
-        return Ok(());
-    }
-
-    stats.activity.files += tasks.len() as u64;
-    let total_tasks = tasks.len();
-    let file_sizes: Vec<u64> = tasks.iter().map(|t| t.size).collect();
-    let file_names: Vec<String> = tasks.iter().map(|t| t.short_name.clone()).collect();
-    let total_bytes: u64 = file_sizes.iter().sum::<u64>().max(1);
-    let mut total_bytes_read = 0_u64;
-    let mut file_bytes_read = vec![0_u64; total_tasks];
-
-    let worker_count = thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .min(total_tasks)
-        .max(1);
-    let task_queue = Arc::new(Mutex::new(VecDeque::from(tasks)));
-    let (tx, rx) = mpsc::channel::<ActivityWorkerEvent>();
-    let mut handles = Vec::new();
-    for _ in 0..worker_count {
-        let queue = Arc::clone(&task_queue);
-        let worker_tx = tx.clone();
-        handles.push(thread::spawn(move || {
-            while let Some(task) = {
-                let mut q = queue.lock().unwrap();
-                q.pop_front()
-            } {
-                match process_activity_file(&task, &worker_tx) {
-                    Ok(fstats) => {
-                        let _ = worker_tx.send(ActivityWorkerEvent::Finished {
-                            file_index: task.index,
-                            stats: fstats,
-                        });
-                    }
-                    Err(err) => {
-                        let _ = worker_tx.send(ActivityWorkerEvent::Failed {
-                            _file_index: task.index,
-                            error: err.to_string(),
-                        });
-                    }
-                }
-            }
-        }));
-    }
-    drop(tx);
-
-    let mut finished = 0;
-    while finished < total_tasks {
-        match rx.recv()? {
-            ActivityWorkerEvent::Progress {
-                file_index,
-                bytes_read,
-            } => {
-                let capped = bytes_read.min(file_sizes[file_index]);
-                if capped > file_bytes_read[file_index] {
-                    total_bytes_read =
-                        total_bytes_read.saturating_add(capped - file_bytes_read[file_index]);
-                    file_bytes_read[file_index] = capped;
-                }
-                on_progress(
-                    total_bytes_read as f32 / total_bytes as f32,
-                    format!(
-                        "file {}/{}: {}",
-                        file_index + 1,
-                        total_tasks,
-                        file_names[file_index]
-                    ),
-                );
-            }
-            ActivityWorkerEvent::Finished {
-                file_index,
-                stats: fstats,
-            } => {
-                if file_sizes[file_index] > file_bytes_read[file_index] {
-                    total_bytes_read = total_bytes_read
-                        .saturating_add(file_sizes[file_index] - file_bytes_read[file_index]);
-                    file_bytes_read[file_index] = file_sizes[file_index];
-                }
-                stats.activity.total_events += fstats.event_lines;
-                stats.activity.parse_errors += fstats.parse_errors;
-                for (et, c) in &fstats.event_types {
-                    increment_counter(&mut stats.activity.by_event_type, et, *c);
-                }
-                if let Some((_, rel_path, mtime)) =
-                    tasks_paths.iter().find(|(idx, _, _)| *idx == file_index)
-                {
-                    next_activity_cache.insert(
-                        rel_path.clone(),
-                        ActivityFileCache {
-                            mtime_ms: *mtime,
-                            stats: fstats,
-                        },
-                    );
-                }
-                finished += 1;
-                on_progress(
-                    total_bytes_read as f32 / total_bytes as f32,
-                    format!(
-                        "file {}/{}: {} complete",
-                        file_index + 1,
-                        total_tasks,
-                        file_names[file_index]
-                    ),
-                );
-            }
-            ActivityWorkerEvent::Failed { _file_index, error } => {
-                finished += 1;
-                stats.warnings.push(error);
-            }
-        }
-    }
-    for h in handles {
-        let _ = h.join();
-    }
-    stats.activity_cache = next_activity_cache;
-    Ok(())
-}
-
-// Here's where the real magic happens. We read 900 GB of JSON line by line.
-// Pray for our RAM.
-fn process_activity_file(
-    task: &ActivityFileTask,
-    tx: &Sender<ActivityWorkerEvent>,
-) -> Result<ActivityFileStats> {
-    const REPORT_INTERVAL: u64 = 8 * 1024 * 1024;
-    let file = File::open(&task.path)?;
-    let mut reader = BufReader::with_capacity(1024 * 1024, file);
-    let mut line = Vec::new();
-    let mut bytes_read = 0u64;
-    let mut next_report = REPORT_INTERVAL;
-    let mut fstats = ActivityFileStats::default();
-
-    while reader.read_until(b'\n', &mut line)? > 0 {
-        bytes_read += line.len() as u64;
-        if bytes_read >= next_report {
-            let _ = tx.send(ActivityWorkerEvent::Progress {
-                file_index: task.index,
-                bytes_read,
-            });
-            next_report += REPORT_INTERVAL;
-        }
-        let trimmed = trim_ascii_whitespace(&line);
-        if !trimmed.is_empty() {
-            fstats.event_lines += 1;
-            if let Ok(value) = serde_json::from_slice::<ActivityEventLine>(trimmed) {
-                increment_counter(
-                    &mut fstats.event_types,
-                    value.event_type.unwrap_or(Cow::Borrowed("unknown")),
-                    1,
-                );
-            } else {
-                fstats.parse_errors += 1;
-            }
-        }
-        line.clear();
-    }
-    Ok(fstats)
-}
-
-#[derive(Debug, Deserialize)]
-struct ActivityEventLine<'a> {
-    #[serde(borrow, default)]
-    event_type: Option<Cow<'a, str>>,
-}
-
-struct ActivityFileTask {
-    index: usize,
-    path: PathBuf,
-    size: u64,
-    short_name: String,
-}
-
-enum ActivityWorkerEvent {
-    Progress {
-        file_index: usize,
-        bytes_read: u64,
-    },
-    Finished {
-        file_index: usize,
-        stats: ActivityFileStats,
-    },
-    Failed {
-        _file_index: usize,
-        error: String,
-    },
-}
-
 // Digging through DMs to find all those cringe messages you sent at 3 AM.
 // You know the ones. We all do. Yes...
 pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -> Result<()> {
@@ -447,6 +186,7 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
     let hour_re = Regex::new(r"(?:T| )(\d{2}):(\d{2}):(\d{2})")?;
     let date_re = Regex::new(r"^(\d{4})-(\d{2})-(\d{2})")?;
     let word_re = Regex::new(r"(?i)\b[a-z]{3,15}\b")?;
+    let url_re = Regex::new(r#"https?://[^\s<>"')\]]+"#)?;
 
     let mut dirs: Vec<PathBuf> = fs::read_dir(messages_dir)?
         .filter_map(|e| e.ok())
@@ -458,6 +198,7 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
     let mut next_cache = BTreeMap::new();
     let mut tasks = Vec::new();
     let mut total_word_freq = HashMap::new();
+    let mut total_link_domains: BTreeMap<String, u64> = BTreeMap::new();
     let mut total_char_freq = HashMap::new();
     let mut ch_counts = Vec::new();
 
@@ -476,7 +217,10 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
         let mt_c = get_mtime_ms(&c_path);
 
         if let Some(cached) = stats.channels_cache.get(&id) {
-            if cached.mtime_messages == mt_m && cached.mtime_channel == mt_c {
+            if cached.cache_version == crate::analyzer::structs::CHANNEL_CACHE_VERSION
+                && cached.mtime_messages == mt_m
+                && cached.mtime_channel == mt_c
+            {
                 stats.messages.channels += 1;
                 stats.messages.total += cached.message_count;
                 stats.messages.with_content += cached.messages_with_content;
@@ -493,6 +237,12 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
                 }
                 for (ch, c) in &cached.content.character_frequency {
                     *total_char_freq.entry(*ch).or_insert(0) += c;
+                }
+                stats.insights.links.messages_with_links += cached.link_messages;
+                stats.insights.links.total_links += cached.total_links;
+                stats.insights.links.question_messages += cached.question_messages;
+                for (d, c) in &cached.link_domains {
+                    *total_link_domains.entry(d.clone()).or_insert(0) += c;
                 }
                 ch_counts.push((cached.channel_title.clone(), cached.message_count));
                 next_cache.insert(id, cached.clone());
@@ -524,12 +274,14 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
             let hre = hour_re.clone();
             let dre = date_re.clone();
             let wre = word_re.clone();
+            let url_re = url_re.clone();
             thread::spawn(move || {
                 while let Some(task) = {
                     let mut g = q.lock().unwrap();
                     g.pop_front()
                 } {
                     let mut cstats = ChannelAnalysisCache {
+                        cache_version: crate::analyzer::structs::CHANNEL_CACHE_VERSION,
                         mtime_messages: task.mtime_messages,
                         mtime_channel: task.mtime_channel,
                         ..Default::default()
@@ -549,9 +301,10 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
                             cstats.message_count += 1;
                             let content = extract_message_content(&rec);
                             let attachments = extract_attachment_urls(&rec);
-                            if let Some(ts) =
+                            let msg_ts: Option<String> =
                                 pick_str(&rec, &["Timestamp", "timestamp", "timestamp_ms", "date"])
-                            {
+                                    .map(str::to_owned);
+                            if let Some(ts) = &msg_ts {
                                 if let Some(caps) = hre.captures(ts) {
                                     if let Ok(hr) = caps[1].parse::<u32>() {
                                         *cstats.temporal.by_hour.entry(hr).or_insert(0) += 1;
@@ -574,6 +327,7 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
                                             .or_insert(0) += 1;
                                     }
                                     let ds = format!("{y:04}-{m:02}-{d:02}");
+                                    *cstats.temporal.by_day.entry(ds.clone()).or_insert(0) += 1;
                                     if cstats
                                         .temporal
                                         .first_message_date
@@ -594,7 +348,13 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
                             }
                             if !content.is_empty() {
                                 cstats.messages_with_content += 1;
-                                cstats.content.total_chars += content.chars().count() as u64;
+                                let content_len = content.chars().count() as u64;
+                                cstats.content.total_chars += content_len;
+                                if content_len > cstats.max_message_chars {
+                                    cstats.max_message_chars = content_len;
+                                    cstats.max_message_date =
+                                        msg_ts.as_deref().map(|t| t.chars().take(10).collect());
+                                }
                                 cstats.content.linebreaks += content.matches('\n').count() as u64;
                                 cstats.content.emoji_custom +=
                                     ere.find_iter(&content).count() as u64;
@@ -613,6 +373,21 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
                                             .entry(mat.as_str().to_owned())
                                             .or_insert(0) += 1;
                                     }
+                                }
+                                // Link / question intelligence for the Insights screen.
+                                if content.contains('?') {
+                                    cstats.question_messages += 1;
+                                }
+                                let mut links_in_msg = 0u64;
+                                for url in url_re.find_iter(&content) {
+                                    cstats.total_links += 1;
+                                    links_in_msg += 1;
+                                    if let Some(host) = extract_host(url.as_str()) {
+                                        *cstats.link_domains.entry(host).or_insert(0) += 1;
+                                    }
+                                }
+                                if links_in_msg > 0 {
+                                    cstats.link_messages += 1;
                                 }
                             }
                             for url in attachments {
@@ -660,6 +435,12 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
                     for (ch, c) in &c_entry.content.character_frequency {
                         *total_char_freq.entry(*ch).or_insert(0) += c;
                     }
+                    stats.insights.links.messages_with_links += c_entry.link_messages;
+                    stats.insights.links.total_links += c_entry.total_links;
+                    stats.insights.links.question_messages += c_entry.question_messages;
+                    for (d, c) in &c_entry.link_domains {
+                        *total_link_domains.entry(d.clone()).or_insert(0) += c;
+                    }
                     ch_counts.push((c_entry.channel_title.clone(), c_entry.message_count));
                     next_cache.insert(id, c_entry);
                 }
@@ -683,7 +464,37 @@ pub fn analyze_messages(messages_dir: Option<&Path>, stats: &mut AnalysisData) -
     ch_counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     ch_counts.truncate(25);
     stats.messages.top_channels = ch_counts;
+
+    let mut domains: Vec<(String, u64)> = total_link_domains.into_iter().collect();
+    domains.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    domains.truncate(20);
+    stats.insights.links.top_domains = domains;
+
+    // Personal records for the Insights screen.
+    let records = &mut stats.insights.records;
+    records.first_message_date = stats.messages.temporal.first_message_date.clone();
+    records.last_message_date = stats.messages.temporal.last_message_date.clone();
+    records.biggest_channel = stats.messages.top_channels.first().cloned();
+    for cached in stats.channels_cache.values() {
+        if cached.max_message_chars > records.longest_message_chars {
+            records.longest_message_chars = cached.max_message_chars;
+            records.longest_message_date = cached.max_message_date.clone();
+        }
+    }
     Ok(())
+}
+
+/// Pull the host out of an http(s) URL, lowercased, without the www.
+fn extract_host(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if host.is_empty() {
+        return None;
+    }
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    Some(host.to_ascii_lowercase())
 }
 
 pub fn analyze_activities(activities_dir: Option<&Path>, stats: &mut AnalysisData) -> Result<()> {
@@ -855,19 +666,6 @@ fn is_stop_word(w: &str) -> bool {
             | "net"
             | "org"
     )
-}
-
-fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
-    let start = bytes
-        .iter()
-        .position(|b| !b.is_ascii_whitespace())
-        .unwrap_or(bytes.len());
-    let end = bytes
-        .iter()
-        .rposition(|b| !b.is_ascii_whitespace())
-        .map(|idx| idx + 1)
-        .unwrap_or(start);
-    &bytes[start..end]
 }
 
 pub fn value_to_plain_string(v: &Value) -> Option<String> {

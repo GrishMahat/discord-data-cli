@@ -2,9 +2,35 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::layout::Rect;
 
-use crate::app::{AppState, HOME_MENU_ITEMS, execute_home_selection, home_item_disabled_reason};
+use crate::app::{
+    AppState, HOME_MENU_ITEMS, execute_home_selection, handle_download_attachments,
+    home_item_disabled_reason, start_analysis,
+};
 pub(crate) fn handle_home_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
     let disabled_reason = |idx: usize| home_item_disabled_reason(app, idx);
+
+    match key.code {
+        // Quick action buttons advertised on the dashboard.
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            if let Some(reason) = disabled_reason(0) {
+                app.status = reason;
+                app.error = None;
+            } else {
+                start_analysis(app);
+            }
+            return Ok(());
+        }
+        KeyCode::Char('d') | KeyCode::Char('D') => {
+            if let Some(reason) = disabled_reason(4) {
+                app.status = reason;
+                app.error = None;
+            } else {
+                handle_download_attachments(app);
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
 
     match key.code {
         KeyCode::Up

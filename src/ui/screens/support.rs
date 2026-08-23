@@ -62,14 +62,20 @@ fn draw_support_tabbed(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rec
     let tickets: &[SupportTicketView] = app.support_tickets.as_deref().unwrap_or(&[]);
     if tickets.is_empty() {
         let message = if app.support_activity_loading {
-            "  Loading support tickets in background..."
+            "  Loading support tickets in background...".to_owned()
+        } else if let Some(err) = &app.support_tickets_failed {
+            format!("  Support tickets failed to load: {err}")
         } else {
-            "  No support tickets found (or not loaded yet)."
+            "  No support tickets found (or not loaded yet).".to_owned()
         };
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
-                Line::styled(message, Style::default().fg(Color::Cyan)),
+                Line::styled(message, Style::default().fg(if app.support_tickets_failed.is_some() {
+                    Color::Red
+                } else {
+                    Color::Cyan
+                })),
                 Line::from(""),
                 Line::styled(
                     "  Press r to reload from your export.",
@@ -224,11 +230,26 @@ fn draw_support_search_tab(frame: &mut ratatui::Frame<'_>, _app: &AppState, area
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(""),
-            Line::styled("  Search is coming soon.", Style::default().fg(Color::Cyan)),
+            Line::styled(
+                "  Search all messages across every channel.",
+                Style::default().fg(Color::White),
+            ),
             Line::from(""),
             Line::styled(
-                "  Use Support or Activity tabs for now.",
+                "  Full-text search with type and content filters,",
                 Style::default().fg(Color::DarkGray),
+            ),
+            Line::styled(
+                "  streaming results and match highlighting.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::styled(
+                "  Press Enter to open Message Search.",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
         ])
         .block(

@@ -49,7 +49,7 @@ pub(crate) fn handle_gallery_key(app: &mut AppState, key: KeyEvent) {
             if count > 0 && app.gallery.cursor < count {
                 let file = &files[app.gallery.cursor];
                 if file.category == "imgs" {
-                    view_image_in_terminal(&file._path);
+                    view_image_in_terminal(app, &file._path);
                 } else if let Err(e) = open::that(&file._path) {
                     app.error = Some(format!("Failed to open file: {}", e));
                 } else {
@@ -64,21 +64,19 @@ pub(crate) fn handle_gallery_key(app: &mut AppState, key: KeyEvent) {
     }
 }
 
-fn view_image_in_terminal(path: &std::path::Path) {
+fn view_image_in_terminal(app: &mut AppState, path: &std::path::Path) {
     let img = match image::open(path) {
         Ok(img) => img,
-        Err(_) => {
+        Err(e) => {
+            app.error = Some(format!("Could not decode image: {e}"));
             let _ = open::that(path);
             return;
         }
     };
 
-    let term_supports = viuer::is_iterm_supported();
-    if !term_supports {
-        let _ = open::that(path);
-        return;
-    }
-
+    // viuer picks the best available protocol automatically: Kitty, sixel,
+    // iTerm, or (always available) Unicode half-blocks. Only bail to the OS
+    // opener when rendering itself fails.
     let _ = disable_raw_mode();
     let _ = execute!(stdout(), LeaveAlternateScreen);
 
@@ -94,10 +92,17 @@ fn view_image_in_terminal(path: &std::path::Path) {
         },
     );
 
-    if result.is_ok() {
-        let _ = write!(stdout(), "\n\n  Press any key to close the image viewer...");
-        let _ = stdout().flush();
-        let _ = crossterm::event::read();
+    match result {
+        Ok(_) => {
+            let _ = write!(stdout(), "\n\n  Rendered in terminal. Press any key to return...");
+            let _ = stdout().flush();
+            let _ = crossterm::event::read();
+            app.status = "Image rendered in terminal.".to_owned();
+        }
+        Err(e) => {
+            let _ = open::that(path);
+            app.status = format!("Terminal render unsupported ({e}); opened externally.");
+        }
     }
 
     let _ = execute!(stdout(), EnterAlternateScreen);

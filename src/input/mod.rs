@@ -10,16 +10,20 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use self::handlers::*;
 use crate::app::{
     AppState, ChannelFilter, Screen, handle_download_attachments, home_item_disabled_reason,
-    open_activity, open_channel_filter, open_gallery, open_support_activity,
+    open_activity, open_channel_filter, open_gallery, open_search_screen, open_support_activity,
     screen_disabled_reason, start_analysis, try_load_existing_data,
 };
 
 pub(crate) fn handle_paste(app: &mut AppState, text: &str) {
-    if app.screen != Screen::Setup || app.setup.step == crate::app::SetupStep::Confirm {
+    if app.screen == Screen::Setup && app.setup.step != crate::app::SetupStep::Confirm {
+        let sanitized = text.replace(['\r', '\n'], "");
+        app.setup.input.push_str(&sanitized);
         return;
     }
-    let sanitized = text.replace(['\r', '\n'], "");
-    app.setup.input.push_str(&sanitized);
+    if app.screen == Screen::Search && app.search.field == crate::app::SearchField::Input {
+        let sanitized = text.replace(['\r', '\n'], "");
+        app.search.input.push_str(&sanitized);
+    }
 }
 
 pub(crate) fn handle_mouse(app: &mut AppState, mouse: MouseEvent) -> Result<()> {
@@ -58,12 +62,16 @@ pub(crate) fn handle_mouse(app: &mut AppState, mouse: MouseEvent) -> Result<()> 
     match app.screen {
         Screen::Analyzing => handle_analyzing_mouse(app, mouse)?,
         Screen::Home => handle_home_mouse(app, mouse, body[1])?,
+        Screen::Insights => handle_insights_mouse(app, mouse),
+        Screen::Compare => handle_compare_mouse(app, mouse),
+        Screen::ActivityMap => handle_activity_map_mouse(app, mouse),
         Screen::SupportActivity => handle_support_activity_mouse(app, mouse, body[1]),
         Screen::Activity => handle_activity_mouse(app, mouse, body[1]),
         Screen::SupportTicketDetail => handle_support_ticket_detail_mouse(app, mouse, body[1]),
         Screen::ActivityDetail => handle_activity_detail_mouse(app, mouse, body[1]),
         Screen::ChannelList => handle_channel_mouse(app, mouse, body[1])?,
         Screen::MessageView => handle_message_mouse(app, mouse, body[1]),
+        Screen::Search => handle_search_mouse(app, mouse, body[1])?,
         Screen::Settings => handle_settings_mouse(app, mouse, body[1]),
         Screen::Gallery => handle_gallery_mouse(app, mouse, body[1]),
         _ => {}
@@ -77,7 +85,7 @@ fn sidebar_at_position(area: Rect, x: u16, y: u16) -> Option<usize> {
         return None;
     }
     let row = mouse_row_in_list(area, y);
-    if row < 10 { Some(row) } else { None }
+    if row < 14 { Some(row) } else { None }
 }
 
 fn mouse_row_in_list(area: Rect, y: u16) -> usize {
@@ -96,11 +104,15 @@ fn navigate_to_sidebar_row(app: &mut AppState, row: usize) -> Result<()> {
             }
         }
         2 => navigate_to_tab(app, Screen::Overview)?,
-        3 => navigate_to_tab(app, Screen::SupportActivity)?,
-        4 => navigate_to_tab(app, Screen::Activity)?,
-        5 => navigate_to_tab(app, Screen::ChannelList)?,
-        6 => navigate_to_tab(app, Screen::Gallery)?,
-        7 => {
+        3 => navigate_to_tab(app, Screen::Insights)?,
+        4 => navigate_to_tab(app, Screen::Compare)?,
+        5 => navigate_to_tab(app, Screen::ActivityMap)?,
+        6 => navigate_to_tab(app, Screen::SupportActivity)?,
+        7 => navigate_to_tab(app, Screen::Activity)?,
+        8 => navigate_to_tab(app, Screen::Search)?,
+        9 => navigate_to_tab(app, Screen::ChannelList)?,
+        10 => navigate_to_tab(app, Screen::Gallery)?,
+        11 => {
             if let Some(reason) = home_item_disabled_reason(app, 4) {
                 app.status = reason;
                 app.error = None;
@@ -108,8 +120,8 @@ fn navigate_to_sidebar_row(app: &mut AppState, row: usize) -> Result<()> {
                 handle_download_attachments(app);
             }
         }
-        8 => navigate_to_tab(app, Screen::Settings)?,
-        9 => app.should_quit = true,
+        12 => navigate_to_tab(app, Screen::Settings)?,
+        13 => app.should_quit = true,
         _ => {}
     }
     Ok(())
@@ -128,11 +140,29 @@ fn navigate_to_tab(app: &mut AppState, target: Screen) -> Result<()> {
             try_load_existing_data(app);
             app.screen = Screen::Overview;
         }
+        Screen::Insights => {
+            try_load_existing_data(app);
+            app.insights_scroll = 0;
+            app.screen = Screen::Insights;
+        }
+        Screen::Compare => {
+            try_load_existing_data(app);
+            app.compare_cursor = 0;
+            app.screen = Screen::Compare;
+        }
+        Screen::ActivityMap => {
+            try_load_existing_data(app);
+            app.map_page = 0;
+            app.screen = Screen::ActivityMap;
+        }
         Screen::SupportActivity => {
             open_support_activity(app)?;
         }
         Screen::Activity => {
             open_activity(app)?;
+        }
+        Screen::Search => {
+            open_search_screen(app);
         }
         Screen::ChannelList => {
             open_channel_filter(app, ChannelFilter::All)?;
@@ -188,8 +218,12 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
             app.screen,
             Screen::Home
                 | Screen::Overview
+                | Screen::Insights
+                | Screen::Compare
+                | Screen::ActivityMap
                 | Screen::SupportActivity
                 | Screen::Activity
+                | Screen::Search
                 | Screen::ChannelList
                 | Screen::Settings
         )
@@ -198,10 +232,24 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
         return Ok(());
     }
 
+    // "/" opens message search from any main browsing screen.
+    if matches!(key.code, KeyCode::Char('/'))
+        && !matches!(app.screen, Screen::Setup | Screen::Search)
+        && screen_disabled_reason(app, Screen::Search)
+            .is_none()
+    {
+        open_search_screen(app);
+        return Ok(());
+    }
+
     if matches!(
         app.screen,
         Screen::Home
             | Screen::Overview
+            | Screen::Insights
+            | Screen::Compare
+            | Screen::ActivityMap
+            | Screen::Search
             | Screen::SupportActivity
             | Screen::SupportTicketDetail
             | Screen::Activity
@@ -222,6 +270,10 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
         app.screen,
         Screen::Home
             | Screen::Overview
+            | Screen::Insights
+            | Screen::Compare
+            | Screen::ActivityMap
+            | Screen::Search
             | Screen::SupportActivity
             | Screen::SupportTicketDetail
             | Screen::Activity
@@ -249,12 +301,16 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
         Screen::Setup => handle_setup_key(app, key)?,
         Screen::Home => handle_home_key(app, key)?,
         Screen::Overview => handle_overview_key(app, key)?,
+        Screen::Insights => handle_insights_key(app, key),
+        Screen::Compare => handle_compare_key(app, key),
+        Screen::ActivityMap => handle_activity_map_key(app, key),
         Screen::SupportActivity => handle_support_activity_key(app, key)?,
         Screen::Activity => handle_activity_key(app, key)?,
         Screen::SupportTicketDetail => handle_support_ticket_detail_key(app, key),
         Screen::ActivityDetail => handle_activity_detail_key(app, key),
         Screen::ChannelList => handle_channel_key(app, key)?,
         Screen::MessageView => handle_message_key(app, key),
+        Screen::Search => handle_search_key(app, key)?,
         Screen::Settings => handle_settings_key(app, key),
         Screen::Gallery => handle_gallery_key(app, key),
         _ => {}
@@ -265,9 +321,10 @@ pub(crate) fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<()> {
 
 fn cycle_sidebar_row(app: &AppState, reverse: bool) -> usize {
     // Mirrors visible sidebar rows:
-    // 0 Dashboard, 1 Analyze, 2 Overview, 3 Support, 4 Activity,
-    // 5 Channels, 6 Gallery, 7 Download, 8 Settings, 9 Quit
-    let rows = [0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    // 0 Dashboard, 1 Analyze, 2 Overview, 3 Insights, 4 Compare, 5 Activity Map,
+    // 6 Support, 7 Activity, 8 Search, 9 Channels, 10 Gallery, 11 Download,
+    // 12 Settings, 13 Quit
+    let rows = [0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
     // Use sidebar_cursor if set (action rows don't change the screen),
     // otherwise derive from current screen.
         let current = app
@@ -288,7 +345,8 @@ fn cycle_sidebar_row(app: &AppState, reverse: bool) -> usize {
             (next_idx + i) % len
         };
         let candidate = rows[idx];
-        if sidebar_row_disabled(app, candidate).is_none() {
+        let dis = sidebar_row_disabled(app, candidate);
+        if dis.is_none() {
             return candidate;
         }
     }
@@ -299,43 +357,51 @@ fn sidebar_row_for_screen(app: &AppState) -> usize {
     match app.screen {
         Screen::SupportTicketDetail | Screen::SupportActivity => {
             match app.support_activity_tab {
-                crate::app::SupportActivityTab::Activity => 4,
-                _ => 3,
+                crate::app::SupportActivityTab::Activity => 7,
+                _ => 6,
             }
         }
-        Screen::ActivityDetail | Screen::Activity => 4,
-        Screen::MessageView | Screen::ChannelList => 5,
-        Screen::Gallery => 6,
+        Screen::ActivityDetail | Screen::Activity => 7,
+        Screen::Insights => 3,
+        Screen::Compare => 4,
+        Screen::ActivityMap => 5,
+        Screen::Search => 8,
+        Screen::MessageView | Screen::ChannelList => 9,
+        Screen::Gallery => 10,
         Screen::Overview => 2,
-        Screen::Settings => 8,
+        Screen::Settings => 12,
         _ => 0,
     }
 }
 
 fn sidebar_row_disabled(app: &AppState, row: usize) -> Option<String> {
     match row {
-        0 | 9 => None,                          // Dashboard/Quit always available
+        0 | 13 => None,                         // Dashboard/Quit always available
         1 => home_item_disabled_reason(app, 0), // Analyze
         2 => screen_disabled_reason(app, Screen::Overview),
-        3 => screen_disabled_reason(app, Screen::SupportActivity),
-        4 => screen_disabled_reason(app, Screen::Activity),
-        5 => screen_disabled_reason(app, Screen::ChannelList),
-        6 => screen_disabled_reason(app, Screen::Gallery),
-        7 => home_item_disabled_reason(app, 4), // Download
-        8 => screen_disabled_reason(app, Screen::Settings),
+        3 => screen_disabled_reason(app, Screen::Insights),
+        4 => screen_disabled_reason(app, Screen::Compare),
+        5 => screen_disabled_reason(app, Screen::ActivityMap),
+        6 => screen_disabled_reason(app, Screen::SupportActivity),
+        7 => screen_disabled_reason(app, Screen::Activity),
+        8 => screen_disabled_reason(app, Screen::Search),
+        9 => screen_disabled_reason(app, Screen::ChannelList),
+        10 => screen_disabled_reason(app, Screen::Gallery),
+        11 => home_item_disabled_reason(app, 4), // Download
+        12 => screen_disabled_reason(app, Screen::Settings),
         _ => Some("Unknown sidebar row".to_owned()),
     }
 }
 
 fn is_action_row(row: usize) -> bool {
-    matches!(row, 1 | 7 | 9)
+    matches!(row, 1 | 11 | 13)
 }
 
 fn sidebar_row_hint(row: usize) -> &'static str {
     match row {
         1 => "Analyze Now selected. Press Enter to run analysis.",
-        7 => "Download selected. Press Enter to download attachments.",
-        9 => "Quit selected. Press Enter to quit.",
+        11 => "Download selected. Press Enter to download attachments.",
+        13 => "Quit selected. Press Enter to quit.",
         _ => "Press Enter to open.",
     }
 }

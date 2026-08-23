@@ -7,6 +7,45 @@ use ratatui::{
 
 use crate::app::{AppState, ChannelKind, fmt_num};
 
+/// Render raw preview lines ("- [ts] content") into styled ratatui lines.
+pub(crate) fn render_preview_lines(lines: &[String]) -> Vec<Line<'static>> {
+    lines
+        .iter()
+        .map(|l| {
+            if let Some(rest) = l.strip_prefix("- [")
+                && let Some(close) = rest.find(']')
+            {
+                let ts = &rest[..close];
+                let msg = &rest[close + 1..];
+                return Line::from(vec![
+                    ratatui::text::Span::styled("  [", Style::default().fg(Color::DarkGray)),
+                    ratatui::text::Span::styled(
+                        ts.to_owned(),
+                        Style::default().fg(Color::Blue),
+                    ),
+                    ratatui::text::Span::styled("]", Style::default().fg(Color::DarkGray)),
+                    ratatui::text::Span::styled(
+                        msg.to_owned(),
+                        Style::default().fg(Color::White),
+                    ),
+                ]);
+            }
+            Line::from(l.clone())
+        })
+        .collect()
+}
+
+pub(crate) fn kind_color(kind: ChannelKind) -> Color {
+    match kind {
+        ChannelKind::Dm => Color::Green,
+        ChannelKind::GroupDm => Color::LightGreen,
+        ChannelKind::PublicThread => Color::Blue,
+        ChannelKind::Voice => Color::Magenta,
+        ChannelKind::Guild => Color::Yellow,
+        ChannelKind::Other => Color::DarkGray,
+    }
+}
+
 pub(crate) fn draw_message_view(frame: &mut ratatui::Frame<'_>, app: &AppState, area: Rect) {
     let Some(channel) = &app.open_channel else {
         frame.render_widget(
@@ -22,14 +61,7 @@ pub(crate) fn draw_message_view(frame: &mut ratatui::Frame<'_>, app: &AppState, 
         .constraints([Constraint::Length(4), Constraint::Min(4)])
         .split(area);
 
-    let kind_color = match channel.kind {
-        ChannelKind::Dm => Color::Green,
-        ChannelKind::GroupDm => Color::LightGreen,
-        ChannelKind::PublicThread => Color::Blue,
-        ChannelKind::Voice => Color::Magenta,
-        ChannelKind::Guild => Color::Yellow,
-        ChannelKind::Other => Color::DarkGray,
-    };
+    let kind_color = kind_color(channel.kind);
     let info = Paragraph::new(vec![
         Line::from(vec![
             ratatui::text::Span::styled("  ", Style::default()),
@@ -80,25 +112,7 @@ pub(crate) fn draw_message_view(frame: &mut ratatui::Frame<'_>, app: &AppState, 
             rows[1],
         );
     } else {
-        let lines: Vec<Line> = app
-            .open_message_lines
-            .iter()
-            .map(|l| {
-                if let Some(rest) = l.strip_prefix("- [")
-                    && let Some(close) = rest.find(']')
-                {
-                    let ts = &rest[..close];
-                    let msg = &rest[close + 1..];
-                    return Line::from(vec![
-                        ratatui::text::Span::styled("  [", Style::default().fg(Color::DarkGray)),
-                        ratatui::text::Span::styled(ts, Style::default().fg(Color::Blue)),
-                        ratatui::text::Span::styled("]", Style::default().fg(Color::DarkGray)),
-                        ratatui::text::Span::styled(msg, Style::default().fg(Color::White)),
-                    ]);
-                }
-                Line::from(l.as_str())
-            })
-            .collect();
+        let lines = render_preview_lines(&app.open_message_lines);
 
         let scroll_indicator = format!(
             " Messages: line {}/{} [↑↓ Scroll, B Back] ",
